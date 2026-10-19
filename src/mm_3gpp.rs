@@ -22,7 +22,8 @@ fn unsupported<T>(what: &str) -> Result<T> {
 #[interface(name = "org.freedesktop.ModemManager1.Modem.Modem3gpp")]
 impl Modem3gpp {
     /// "" registers automatically, otherwise with the operator "MCCMNC".
-    async fn register(&self, #[zbus(connection)] conn: &Connection, operator_id: &str) -> Result<()> {
+    async fn register(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, operator_id: &str) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         if operator_id.is_empty() {
             conn.call_method(Some(SERVICE), self.ofono_path.as_str(), Some(NETREG), "Register", &()).await?;
             return Ok(());
@@ -40,7 +41,8 @@ impl Modem3gpp {
         Ok(())
     }
 
-    async fn scan(&self, #[zbus(connection)] conn: &Connection) -> Result<Vec<HashMap<String, OwnedVariant>>> {
+    async fn scan(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<Vec<HashMap<String, OwnedVariant>>> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let operators: Vec<(OwnedObjectPath, Props)> = conn
             .call_method(Some(SERVICE), self.ofono_path.as_str(), Some(NETREG), "Scan", &())
             .await?
@@ -49,27 +51,33 @@ impl Modem3gpp {
         Ok(operators.iter().map(|(_, p)| derive::scan_result(p)).collect())
     }
 
-    async fn set_eps_ue_mode_operation(&self, _mode: u32) -> Result<()> {
+    async fn set_eps_ue_mode_operation(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _mode: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         unsupported("SetEpsUeModeOperation")
     }
 
-    async fn set_initial_eps_bearer_settings(&self, _settings: HashMap<String, OwnedVariant>) -> Result<()> {
+    async fn set_initial_eps_bearer_settings(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _settings: HashMap<String, OwnedVariant>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         unsupported("SetInitialEpsBearerSettings")
     }
 
-    async fn set_nr5g_registration_settings(&self, _properties: HashMap<String, OwnedVariant>) -> Result<()> {
+    async fn set_nr5g_registration_settings(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _properties: HashMap<String, OwnedVariant>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         unsupported("SetNr5gRegistrationSettings")
     }
 
-    async fn disable_facility_lock(&self, _properties: (u32, String)) -> Result<()> {
+    async fn disable_facility_lock(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _properties: (u32, String)) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         unsupported("DisableFacilityLock")
     }
 
-    async fn set_carrier_lock(&self, _data: Vec<u8>) -> Result<()> {
+    async fn set_carrier_lock(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _data: Vec<u8>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         unsupported("SetCarrierLock")
     }
 
-    async fn set_packet_service_state(&self, _state: u32) -> Result<()> {
+    async fn set_packet_service_state(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _state: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         unsupported("SetPacketServiceState")
     }
 

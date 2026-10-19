@@ -57,12 +57,13 @@ impl Voice {
 
     /// Deleting a call that is still up hangs it up first.
     async fn delete_call(
-        &mut self,
+        &mut self, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &Connection,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         path: OwnedObjectPath,
     ) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         let Some(i) = self.calls.iter().position(|c| *c == path) else {
             return Err(CoreError::Failed(format!("no call {path}")));
         };
@@ -86,11 +87,12 @@ impl Voice {
     }
 
     async fn create_call(
-        &mut self,
+        &mut self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         properties: HashMap<String, OwnedVariant>,
     ) -> Result<OwnedObjectPath> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         let number = match properties.get("number").map(|v| &**v) {
             Some(Variant::Str(n)) if !n.is_empty() => n.to_string(),
             _ => return Err(CoreError::Failed("missing 'number'".into())),
@@ -99,28 +101,34 @@ impl Voice {
         Ok(self.add_call(server, &em, data, None).await?)
     }
 
-    async fn hold_and_accept(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn hold_and_accept(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         self.manager(conn, "HoldAndAnswer").await
     }
 
-    async fn hangup_and_accept(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn hangup_and_accept(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         self.manager(conn, "ReleaseAndAnswer").await
     }
 
-    async fn hangup_all(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn hangup_all(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         self.manager(conn, "HangupAll").await
     }
 
-    async fn transfer(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn transfer(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         self.manager(conn, "Transfer").await
     }
 
-    async fn call_waiting_setup(&self, #[zbus(connection)] conn: &Connection, enable: bool) -> Result<()> {
+    async fn call_waiting_setup(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, enable: bool) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         let value = if enable { "enabled" } else { "disabled" };
         Ok(ofono::set_property(conn, &self.ofono_path, CALL_SETTINGS, "VoiceCallWaiting", value.into()).await?)
     }
 
-    async fn call_waiting_query(&self, #[zbus(connection)] conn: &Connection) -> Result<bool> {
+    async fn call_waiting_query(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<bool> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         let props = ofono::get_properties(conn, &self.ofono_path, CALL_SETTINGS).await?;
         Ok(ofono::str(&props, "VoiceCallWaiting") == Some("enabled"))
     }

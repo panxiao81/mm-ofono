@@ -22,24 +22,29 @@ impl Sim {
 
 #[interface(name = "org.freedesktop.ModemManager1.Sim")]
 impl Sim {
-    async fn send_pin(&self, #[zbus(connection)] conn: &Connection, pin: &str) -> Result<()> {
+    async fn send_pin(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, pin: &str) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         self.call(conn, "EnterPin", &("pin", pin)).await
     }
 
-    async fn send_puk(&self, #[zbus(connection)] conn: &Connection, puk: &str, pin: &str) -> Result<()> {
+    async fn send_puk(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, puk: &str, pin: &str) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         self.call(conn, "ResetPin", &("puk", puk, pin)).await
     }
 
-    async fn enable_pin(&self, #[zbus(connection)] conn: &Connection, pin: &str, enabled: bool) -> Result<()> {
+    async fn enable_pin(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, pin: &str, enabled: bool) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let method = if enabled { "LockPin" } else { "UnlockPin" };
         self.call(conn, method, &("pin", pin)).await
     }
 
-    async fn change_pin(&self, #[zbus(connection)] conn: &Connection, old_pin: &str, new_pin: &str) -> Result<()> {
+    async fn change_pin(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, old_pin: &str, new_pin: &str) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         self.call(conn, "ChangePin", &("pin", old_pin, new_pin)).await
     }
 
-    async fn set_preferred_networks(&self, _preferred_networks: Vec<(String, u32)>) -> Result<()> {
+    async fn set_preferred_networks(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _preferred_networks: Vec<(String, u32)>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Err(CoreError::Unsupported("oFono does not manage the preferred network list".into()))
     }
 

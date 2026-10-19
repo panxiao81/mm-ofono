@@ -39,7 +39,8 @@ impl Modem {
 impl Modem {
     /// Enabled = radio on. Disabling keeps the modem powered with the radio
     /// off (low power), as ModemManager does.
-    async fn enable(&self, #[zbus(connection)] conn: &Connection, enable: bool) -> Result<()> {
+    async fn enable(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, enable: bool) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         if enable {
             self.set(conn, MODEM, "Powered", true.into()).await?;
         }
@@ -51,12 +52,13 @@ impl Modem {
     }
 
     async fn create_bearer(
-        &mut self,
+        &mut self, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &Connection,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         properties: HashMap<String, OwnedVariant>,
     ) -> Result<OwnedObjectPath> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let path = mm_bearer::new_bearer(conn, server, &self.ofono_path, &self.contexts, Request::from_dict(&properties)).await?;
         self.bearers.push(path.clone());
         self.bearers_changed(&em).await?;
@@ -64,12 +66,13 @@ impl Modem {
     }
 
     async fn delete_bearer(
-        &mut self,
+        &mut self, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &Connection,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         bearer: OwnedObjectPath,
     ) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let Some(i) = self.bearers.iter().position(|b| *b == bearer) else {
             return Err(CoreError::Failed(format!("no bearer {bearer}")));
         };
@@ -81,15 +84,18 @@ impl Modem {
         Ok(())
     }
 
-    async fn reset(&self) -> Result<()> {
+    async fn reset(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Self::unsupported("Reset")
     }
 
-    async fn factory_reset(&self, _code: &str) -> Result<()> {
+    async fn factory_reset(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _code: &str) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Self::unsupported("FactoryReset")
     }
 
-    async fn set_power_state(&self, #[zbus(connection)] conn: &Connection, state: u32) -> Result<()> {
+    async fn set_power_state(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, state: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         match state {
             power::MM_MODEM_POWER_STATE_ON => {
                 self.set(conn, MODEM, "Powered", true.into()).await?;
@@ -101,30 +107,36 @@ impl Modem {
         }
     }
 
-    async fn set_current_capabilities(&self, _capabilities: u32) -> Result<()> {
+    async fn set_current_capabilities(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _capabilities: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Self::unsupported("SetCurrentCapabilities")
     }
 
-    async fn set_current_modes(&self, #[zbus(connection)] conn: &Connection, modes: (u32, u32)) -> Result<()> {
+    async fn set_current_modes(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, modes: (u32, u32)) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let pref = derive::preference_for(&self.status.supported_modes, modes).ok_or_else(|| {
             CoreError::Unsupported(format!("mode combination {modes:?} can't be expressed in oFono"))
         })?;
         self.set(conn, RADIO, "TechnologyPreference", pref.into()).await
     }
 
-    async fn set_current_bands(&self, _bands: Vec<u32>) -> Result<()> {
+    async fn set_current_bands(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _bands: Vec<u32>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Self::unsupported("SetCurrentBands")
     }
 
-    async fn set_primary_sim_slot(&self, _sim_slot: u32) -> Result<()> {
+    async fn set_primary_sim_slot(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _sim_slot: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Err(CoreError::Unsupported("SIM slot switching is not implemented yet".into()))
     }
 
-    async fn get_cell_info(&self) -> Result<Vec<HashMap<String, OwnedVariant>>> {
+    async fn get_cell_info(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>) -> Result<Vec<HashMap<String, OwnedVariant>>> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Err(CoreError::Unsupported("cell info is not implemented yet".into()))
     }
 
-    async fn command(&self, _cmd: &str, _timeout: u32) -> Result<String> {
+    async fn command(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _cmd: &str, _timeout: u32) -> Result<String> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         Self::unsupported("Command")
     }
 

@@ -504,6 +504,30 @@ impl Cell {
     pub async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
 }
 
+/// PolicyKit: allows or refuses everything, and records what was asked.
+#[derive(Default)]
+pub struct Polkit {
+    pub refuse: bool,
+    /// (subject bus name, action) per check.
+    pub checks: Vec<(String, String)>,
+}
+
+#[interface(name = "org.freedesktop.PolicyKit1.Authority")]
+impl Polkit {
+    fn check_authorization(
+        &mut self,
+        subject: (String, HashMap<String, OwnedVariant>),
+        action_id: String,
+        _details: HashMap<String, String>,
+        _flags: u32,
+        _cancellation_id: String,
+    ) -> (bool, bool, HashMap<String, String>) {
+        let name = String::try_from(subject.1["name"].try_clone().unwrap()).unwrap();
+        self.checks.push((name, action_id));
+        (!self.refuse, false, HashMap::new())
+    }
+}
+
 /// Sailfish oFono's data SIM selection.
 #[derive(Default)]
 pub struct NemoModemManager {
@@ -593,6 +617,8 @@ impl FakeOfono {
         conn.object_server().at("/", Manager::default()).await.unwrap();
         conn.object_server().at("/", NemoModemManager::default()).await.unwrap();
         conn.request_name("org.ofono").await.unwrap();
+        conn.object_server().at("/org/freedesktop/PolicyKit1/Authority", Polkit::default()).await.unwrap();
+        conn.request_name("org.freedesktop.PolicyKit1").await.unwrap();
         FakeOfono { conn }
     }
 
@@ -768,6 +794,10 @@ impl FakeOfono {
 
     pub async fn remote_hangup(&self, call: &OwnedObjectPath) {
         end_call(&self.conn, call, "remote").await;
+    }
+
+    pub async fn polkit(&self) -> zbus::object_server::InterfaceRef<Polkit> {
+        self.conn.object_server().interface::<_, Polkit>("/org/freedesktop/PolicyKit1/Authority").await.unwrap()
     }
 
     pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {

@@ -79,7 +79,8 @@ impl Call {
 #[interface(name = "org.freedesktop.ModemManager1.Call")]
 impl Call {
     /// Dial a call made with Voice.CreateCall.
-    async fn start(&self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+    async fn start(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         let d = self.get();
         if d.state != st::MM_CALL_STATE_UNKNOWN as i32 || d.direction != dir::MM_CALL_DIRECTION_OUTGOING as i32 {
             return Err(CoreError::Failed("only a new outgoing call can be started".into()));
@@ -113,7 +114,8 @@ impl Call {
         Ok(())
     }
 
-    async fn accept(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn accept(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         match self.get().state as u32 {
             st::MM_CALL_STATE_RINGING_IN => self.voice_call(conn, "Answer", &()).await,
             st::MM_CALL_STATE_WAITING => self.manager(conn, "HoldAndAnswer", &()).await,
@@ -121,26 +123,31 @@ impl Call {
         }
     }
 
-    async fn deflect(&self, #[zbus(connection)] conn: &Connection, number: &str) -> Result<()> {
+    async fn deflect(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, number: &str) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         self.voice_call(conn, "Deflect", &(number,)).await
     }
 
-    async fn join_multiparty(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn join_multiparty(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         conn.call_method(Some(SERVICE), self.ofono_path.as_str(), Some(VOICE), "CreateMultiparty", &()).await?;
         Ok(())
     }
 
-    async fn leave_multiparty(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn leave_multiparty(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         let call = OwnedObjectPath::try_from(self.ofono_call()?)?;
         conn.call_method(Some(SERVICE), self.ofono_path.as_str(), Some(VOICE), "PrivateChat", &(call,)).await?;
         Ok(())
     }
 
-    async fn hangup(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn hangup(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         self.voice_call(conn, "Hangup", &()).await
     }
 
-    async fn send_dtmf(&self, #[zbus(connection)] conn: &Connection, dtmf: &str) -> Result<()> {
+    async fn send_dtmf(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, dtmf: &str) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::VOICE).await?;
         self.manager(conn, "SendTones", &(dtmf,)).await
     }
 

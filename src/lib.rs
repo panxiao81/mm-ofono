@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod bearer;
 pub mod derive;
 pub mod device;

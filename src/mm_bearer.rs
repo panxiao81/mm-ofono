@@ -177,11 +177,13 @@ pub async fn new_bearer(conn: &Connection, server: &ObjectServer, ofono_path: &s
 
 #[interface(name = "org.freedesktop.ModemManager1.Bearer")]
 impl Bearer {
-    async fn connect(&self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+    async fn connect(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         self.connect_inner(conn, &em).await
     }
 
-    async fn disconnect(&self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+    async fn disconnect(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         self.disconnect_inner(conn, &em).await
     }
 
@@ -264,12 +266,13 @@ impl Simple {
     /// Reuse the modem's bearer for the same APN and type, or create one,
     /// and connect it.
     async fn connect(
-        &self,
+        &self, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &Connection,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         properties: Dict,
     ) -> Result<OwnedObjectPath> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let req = Request::from_dict(&properties);
         let modem = server.interface::<_, Modem>(em.path()).await?;
         let existing = modem.get().await.bearers.clone();
@@ -299,12 +302,13 @@ impl Simple {
 
     /// "/" disconnects every bearer of the modem.
     async fn disconnect(
-        &self,
+        &self, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(connection)] conn: &Connection,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         bearer: OwnedObjectPath,
     ) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let all = server.interface::<_, Modem>(em.path()).await?.get().await.bearers.clone();
         let targets: Vec<_> = if bearer.as_str() == "/" { all } else { all.into_iter().filter(|p| *p == bearer).collect() };
         if targets.is_empty() {

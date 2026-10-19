@@ -24,7 +24,8 @@ pub struct ModemSignal {
 
 #[interface(name = "org.freedesktop.ModemManager1.Modem.Signal")]
 impl ModemSignal {
-    async fn setup(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>, rate: u32) -> Result<()> {
+    async fn setup(&mut self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(signal_emitter)] em: SignalEmitter<'_>, rate: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         if (rate > 0) != (self.rate > 0) {
             if let Some(task) = &self.task {
                 let _ = task.send(Event::CellInfo(rate > 0));
@@ -36,7 +37,8 @@ impl ModemSignal {
     }
 
     /// Thresholds are recorded; values are announced on every change anyway.
-    async fn setup_thresholds(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>, settings: HashMap<String, OwnedVariant>) -> Result<()> {
+    async fn setup_thresholds(&mut self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(signal_emitter)] em: SignalEmitter<'_>, settings: HashMap<String, OwnedVariant>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         if let Some(Variant::U32(t)) = settings.get("rssi-threshold").map(|v| &**v) {
             self.rssi_threshold = *t;
             self.rssi_threshold_changed(&em).await?;

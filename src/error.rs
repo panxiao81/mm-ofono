@@ -7,6 +7,7 @@ pub enum CoreError {
     ZBus(zbus::Error),
     Failed(String),
     Unsupported(String),
+    Unauthorized(String),
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

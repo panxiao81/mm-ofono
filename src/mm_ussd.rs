@@ -43,7 +43,8 @@ impl Ussd {
 
 #[interface(name = "org.freedesktop.ModemManager1.Modem.Modem3gpp.Ussd")]
 impl Ussd {
-    async fn initiate(&self, #[zbus(connection)] conn: &Connection, command: &str) -> Result<String> {
+    async fn initiate(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, command: &str) -> Result<String> {
+        crate::auth::check(conn, &header, crate::auth::USSD).await?;
         let (kind, value): (String, OwnedVariant) = conn
             .call_method(Some(SERVICE), self.ofono_path.as_str(), Some(SUPPLEMENTARY), "Initiate", &(command,))
             .await?
@@ -57,7 +58,8 @@ impl Ussd {
         })
     }
 
-    async fn respond(&self, #[zbus(connection)] conn: &Connection, response: &str) -> Result<String> {
+    async fn respond(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, response: &str) -> Result<String> {
+        crate::auth::check(conn, &header, crate::auth::USSD).await?;
         Ok(conn
             .call_method(Some(SERVICE), self.ofono_path.as_str(), Some(SUPPLEMENTARY), "Respond", &(response,))
             .await?
@@ -65,7 +67,8 @@ impl Ussd {
             .deserialize()?)
     }
 
-    async fn cancel(&self, #[zbus(connection)] conn: &Connection) -> Result<()> {
+    async fn cancel(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::USSD).await?;
         conn.call_method(Some(SERVICE), self.ofono_path.as_str(), Some(SUPPLEMENTARY), "Cancel", &()).await?;
         Ok(())
     }

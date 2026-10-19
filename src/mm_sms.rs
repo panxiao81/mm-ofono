@@ -117,7 +117,8 @@ impl Sms {
 
 #[interface(name = "org.freedesktop.ModemManager1.Sms")]
 impl Sms {
-    async fn send(&self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+    async fn send(&self, #[zbus(header)] header: zbus::message::Header<'_>, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::MESSAGING).await?;
         let d = self.get();
         if !matches!(d.state, state::MM_SMS_STATE_UNKNOWN | state::MM_SMS_STATE_STORED) {
             return Err(CoreError::Failed("only new or stored messages can be sent".into()));
@@ -135,7 +136,8 @@ impl Sms {
         }
     }
 
-    async fn store(&self, _storage: u32) -> Result<()> {
+    async fn store(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _storage: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::MESSAGING).await?;
         Err(CoreError::Unsupported("oFono keeps no message storage".into()))
     }
 

@@ -48,16 +48,18 @@ impl Messaging {
         self.messages.clone()
     }
 
-    async fn set_default_storage(&self, _storage: u32) -> Result<()> {
+    async fn set_default_storage(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _storage: u32) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::MESSAGING).await?;
         Err(CoreError::Unsupported("oFono keeps no message storage".into()))
     }
 
     async fn delete(
-        &mut self,
+        &mut self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         path: OwnedObjectPath,
     ) -> Result<()> {
+        crate::auth::check(conn, &header, crate::auth::MESSAGING).await?;
         let Some(i) = self.messages.iter().position(|p| *p == path) else {
             return Err(CoreError::Failed(format!("no message {path}")));
         };
@@ -70,11 +72,12 @@ impl Messaging {
 
     /// Composes a message; Sms.Send sends it.
     async fn create(
-        &mut self,
+        &mut self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(object_server)] server: &ObjectServer,
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         properties: HashMap<String, OwnedVariant>,
     ) -> Result<OwnedObjectPath> {
+        crate::auth::check(conn, &header, crate::auth::MESSAGING).await?;
         let number = str_prop(&properties, "number").ok_or_else(|| CoreError::Failed("missing 'number'".into()))?;
         let text = str_prop(&properties, "text").unwrap_or_default();
         let data = match properties.get("data").map(|v| &**v) {

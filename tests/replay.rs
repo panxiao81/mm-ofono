@@ -500,3 +500,42 @@ async fn sim_swap_keeps_the_modem() {
     assert_eq!(obj.as_str(), modem_path, "still the same modem object");
     assert_ne!(path(m, "Sim"), "/");
 }
+
+/// Like ModemManager: guarded methods check PolicyKit for the caller before
+/// touching the modem; queries don't.
+#[tokio::test]
+async fn unauthorized_callers_are_refused() {
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+    let polkit = ofono.polkit().await;
+    polkit.get_mut().await.refuse = true;
+    polkit.get_mut().await.checks.clear();
+
+    let refused = |r: zbus::Result<OwnedObjectPath>, action: &str| match r {
+        Err(zbus::Error::MethodError(name, Some(msg), _)) => {
+            assert_eq!(name.as_str(), "org.freedesktop.ModemManager1.Error.Core.Unauthorized");
+            assert_eq!(msg, format!("PolicyKit authorization failed: not authorized for '{action}'"));
+        }
+        other => panic!("expected Unauthorized, got {other:?}"),
+    };
+
+    let sms = HashMap::from([("number", Variant::from("+10000000002")), ("text", Variant::from("hi"))]);
+    refused(call(&client, &modem_path, MESSAGING, "Create", &(sms,)).await, "org.freedesktop.ModemManager1.Messaging");
+    let voice = HashMap::from([("number", Variant::from("117"))]);
+    refused(call(&client, &modem_path, VOICE, "CreateCall", &(voice,)).await, "org.freedesktop.ModemManager1.Voice");
+    let data = HashMap::from([("apn", Variant::from("ctnet"))]);
+    refused(call(&client, &modem_path, SIMPLE, "Connect", &(data,)).await, "org.freedesktop.ModemManager1.Device.Control");
+
+    // Nothing reached oFono, and queries still work.
+    assert!(ofono.sent_sms("/ril_0").await.is_empty());
+    assert!(ofono.voice("/ril_0").await.get().await.dialled.is_empty());
+    let listed: Vec<OwnedObjectPath> = call(&client, &modem_path, MESSAGING, "List", &()).await.unwrap();
+    assert!(listed.is_empty());
+
+    // Checked for the caller's own bus name.
+    let me = client.unique_name().unwrap().to_string();
+    let checks = polkit.get().await.checks.clone();
+    assert_eq!(checks.len(), 3);
+    assert!(checks.iter().all(|(who, _)| *who == me), "{checks:?}");
+}

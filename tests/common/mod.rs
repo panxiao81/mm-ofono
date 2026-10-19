@@ -271,6 +271,66 @@ impl ConnectionContext {
     async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
 }
 
+/// Sailfish CellInfo: subscribing (GetCells) first returns nothing, then
+/// announces the cells, like the real one.
+#[derive(Default)]
+pub struct CellInfo {
+    pub subscribed: bool,
+    pub cells: Vec<OwnedObjectPath>,
+}
+
+#[interface(name = "org.nemomobile.ofono.CellInfo")]
+impl CellInfo {
+    async fn get_cells(&mut self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) -> Vec<OwnedObjectPath> {
+        if !self.subscribed {
+            self.subscribed = true;
+            let cell = OwnedObjectPath::try_from(format!("{}/cell_0", em.path())).unwrap();
+            conn.object_server()
+                .at(&cell, Cell { kind: "lte".into(), registered: true, props: Props::from([("rsrp".to_owned(), ov(67i32)), ("rsrq".to_owned(), ov(9i32)), ("signalStrength".to_owned(), ov(31i32))]) })
+                .await
+                .unwrap();
+            self.cells = vec![cell.clone()];
+            let em = em.to_owned();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                CellInfo::cells_added(&em, &[cell]).await.unwrap();
+            });
+            return vec![];
+        }
+        self.cells.clone()
+    }
+
+    async fn unsubscribe(&mut self, #[zbus(object_server)] server: &ObjectServer, #[zbus(signal_emitter)] em: SignalEmitter<'_>) {
+        self.subscribed = false;
+        for c in std::mem::take(&mut self.cells) {
+            server.remove::<Cell, _>(&c).await.unwrap();
+            CellInfo::cells_removed(&em, &[c]).await.unwrap();
+        }
+    }
+
+    #[zbus(signal)]
+    async fn cells_added(em: &SignalEmitter<'_>, paths: &[OwnedObjectPath]) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn cells_removed(em: &SignalEmitter<'_>, paths: &[OwnedObjectPath]) -> zbus::Result<()>;
+}
+
+pub struct Cell {
+    kind: String,
+    registered: bool,
+    props: Props,
+}
+
+#[interface(name = "org.nemomobile.ofono.Cell")]
+impl Cell {
+    fn get_all(&self) -> (i32, String, bool, Props) {
+        (1, self.kind.clone(), self.registered, copy(&self.props))
+    }
+
+    #[zbus(signal)]
+    pub async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
+}
+
 /// Sailfish oFono's data SIM selection.
 #[derive(Default)]
 pub struct NemoModemManager {
@@ -488,6 +548,21 @@ impl FakeOfono {
     pub async fn context(&self, path: &str) -> Props {
         let ctx = self.conn.object_server().interface::<_, ConnectionContext>(path).await.unwrap();
         copy(&ctx.get().await.props)
+    }
+
+    pub async fn cell_info(&self, modem: &str) -> zbus::object_server::InterfaceRef<CellInfo> {
+        let server = self.conn.object_server();
+        if server.interface::<_, CellInfo>(modem).await.is_err() {
+            server.at(modem, CellInfo::default()).await.unwrap();
+        }
+        server.interface::<_, CellInfo>(modem).await.unwrap()
+    }
+
+    /// Change a measurement of a subscribed cell.
+    pub async fn cell_changed(&self, cell: &str, name: &str, value: i32) {
+        let c = self.conn.object_server().interface::<_, Cell>(cell).await.unwrap();
+        c.get_mut().await.props.insert(name.to_owned(), ov(value));
+        Cell::property_changed(c.signal_emitter(), name, &value.into()).await.unwrap();
     }
 
     pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {

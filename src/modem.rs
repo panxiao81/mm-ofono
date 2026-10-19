@@ -2,7 +2,10 @@
 //! oFono signals and GetProperties replies strictly one at a time, and after
 //! each one brings the ModemManager objects in line with that state.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -17,7 +20,9 @@ use crate::mm_bearer::{Bearer, Simple};
 use crate::mm_3gpp::Modem3gpp;
 use crate::mm_messaging::{self, Messaging};
 use crate::mm_modem::Modem;
+use crate::mm_signal::ModemSignal;
 use crate::mm_sms::SmsData;
+use crate::signal::{self, CELL, CELL_INFO, Cell};
 use crate::mm_sim::Sim;
 use crate::ofono::{self, MODEM, Props, Signal};
 use crate::{MM_PATH, objects};
@@ -32,6 +37,9 @@ static NEXT_SIM: AtomicU32 = AtomicU32::new(0);
 pub enum Event {
     Snapshot(String, Props),
     Contexts(Vec<(String, Props)>),
+    /// Signal.Setup asks to subscribe to (true) or drop cell info.
+    CellInfo(bool),
+    Cell(String, Cell),
     Removed,
 }
 
@@ -49,6 +57,7 @@ pub fn spawn(conn: Connection, path: String, props: Props) -> mpsc::UnboundedSen
         device: None,
         pending_sms: vec![],
         contexts: Contexts::default(),
+        cells: HashMap::new(),
     };
     tokio::spawn(task.run(props, rx));
     tx
@@ -67,6 +76,8 @@ struct Task {
     pending_sms: Vec<SmsData>,
     /// oFono connection contexts by path, shared with the bearers.
     contexts: Contexts,
+    /// Cells reported by CellInfo while subscribed.
+    cells: HashMap<String, Cell>,
 }
 
 impl Task {
@@ -89,6 +100,8 @@ impl Task {
                 Some(event) = rx.recv() => match event {
                     Event::Snapshot(iface, props) => self.snapshot(&iface, props),
                     Event::Contexts(list) => self.contexts.lock().unwrap().extend(list),
+                    Event::CellInfo(on) => self.cell_info(on).await,
+                    Event::Cell(path, cell) => drop(self.cells.insert(path, cell)),
                     Event::Removed => break,
                 },
                 else => break,
@@ -128,6 +141,33 @@ impl Task {
         });
     }
 
+    /// Subscribe to CellInfo (GetCells does that, per connection) or drop it.
+    async fn cell_info(&mut self, on: bool) {
+        let method = if on { "GetCells" } else { "Unsubscribe" };
+        let reply = self.conn.call_method(Some(ofono::SERVICE), self.path.as_str(), Some(CELL_INFO), method, &()).await;
+        match reply {
+            Ok(r) if on => {
+                // Cells that already exist (another subscriber) aren't announced again.
+                for path in r.body().deserialize::<Vec<OwnedObjectPath>>().unwrap_or_default() {
+                    self.fetch_cell(path.as_str());
+                }
+            }
+            Ok(_) => self.cells.clear(),
+            Err(e) => warn!("{}: CellInfo.{method}: {e}", self.path),
+        }
+    }
+
+    fn fetch_cell(&self, path: &str) {
+        let (conn, path, events) = (self.conn.clone(), path.to_owned(), self.events.clone());
+        tokio::spawn(async move {
+            let reply = conn.call_method(Some(ofono::SERVICE), path.as_str(), Some(CELL), "GetAll", &()).await;
+            match reply.and_then(|r| r.body().deserialize::<(i32, String, bool, Props)>()) {
+                Ok((_, kind, registered, props)) => drop(events.send(Event::Cell(path, Cell { kind, registered, props }))),
+                Err(e) => warn!("{path}: Cell.GetAll: {e}"),
+            }
+        });
+    }
+
     async fn signal(&mut self, signal: Signal) {
         match signal {
             Signal::Property { path, iface, key, value } if path == self.path => {
@@ -143,8 +183,15 @@ impl Task {
                     ctx.insert(key, value);
                 }
             }
+            Signal::Property { path, iface, key, value } if iface == CELL => {
+                if let Some(cell) = self.cells.get_mut(&path) {
+                    cell.props.insert(key, value);
+                }
+            }
             Signal::Property { .. } => {}
             Signal::Sms { text, info, immediate } => self.received_sms(text, info, immediate).await,
+            Signal::CellsAdded(paths) => paths.iter().for_each(|p| self.fetch_cell(p)),
+            Signal::CellsRemoved(paths) => paths.iter().for_each(|p| drop(self.cells.remove(p))),
             Signal::ContextAdded { path, props } => drop(self.contexts.lock().unwrap().insert(path, props)),
             Signal::ContextRemoved { path } => drop(self.contexts.lock().unwrap().remove(&path)),
         }
@@ -239,6 +286,7 @@ impl Task {
                 server.at(&path, Modem3gpp { ofono_path: ofono_path.clone(), status: status_3gpp }).await?;
                 server.at(&path, Messaging { ofono_path: ofono_path.clone(), messages: vec![] }).await?;
                 server.at(&path, Simple { ofono_path, contexts }).await?;
+                server.at(&path, ModemSignal { task: Some(self.events.clone()), ..Default::default() }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
                 for sms in std::mem::take(&mut self.pending_sms) {
                     mm_messaging::deliver(&self.conn, &path, sms).await?;
@@ -260,6 +308,9 @@ impl Task {
                     let b = server.interface::<_, Bearer>(&bearer).await?;
                     b.get().await.refresh(b.signal_emitter()).await?;
                 }
+                let values = signal::values(self.cells.values());
+                let iface_signal = server.interface::<_, ModemSignal>(path).await?;
+                objects::update(&self.conn, &iface_signal, |s| s.values = values).await?;
                 if old != new {
                     info!("{}: state {old} -> {new}", self.path);
                     Modem::emit_state_changed(iface.signal_emitter(), old, new, reason::MM_MODEM_STATE_CHANGE_REASON_UNKNOWN).await?;

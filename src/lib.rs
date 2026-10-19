@@ -8,11 +8,13 @@ pub mod mm_3gpp;
 pub mod mm_bearer;
 pub mod mm_messaging;
 pub mod mm_modem;
+pub mod mm_signal;
 pub mod mm_sim;
 pub mod mm_sms;
 pub mod modem;
 pub mod objects;
 pub mod ofono;
+pub mod signal;
 
 use std::collections::HashMap;
 

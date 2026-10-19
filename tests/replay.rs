@@ -279,3 +279,45 @@ async fn data_round_trip() {
     call::<()>(&client, &modem_path, MODEM, "DeleteBearer", &(bearer.clone(),)).await.unwrap();
     assert!(get_all(&client, bearer.as_str(), BEARER).await.is_err());
 }
+
+const SIGNAL: &str = "org.freedesktop.ModemManager1.Modem.Signal";
+
+#[tokio::test]
+async fn signal_follows_cell_info() {
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let cell_info = ofono.cell_info("/ril_0").await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+
+    let lte = |client: Connection, path: String| async move {
+        let props = get_all(&client, &path, SIGNAL).await.unwrap();
+        let lte: HashMap<String, OwnedVariant> = prop(&props, "Lte");
+        lte.get("rsrp").map(|v| f64::try_from(v.try_clone().unwrap()).unwrap())
+    };
+    let wait_for = |want: Option<f64>| {
+        let (client, path) = (client.clone(), modem_path.clone());
+        async move {
+            for _ in 0..100 {
+                if lte(client.clone(), path.clone()).await == want {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            panic!("Lte rsrp never became {want:?}, is {:?}", lte(client, path).await);
+        }
+    };
+
+    // Nothing is measured (or subscribed) until a client asks for a rate.
+    assert_eq!(lte(client.clone(), modem_path.clone()).await, None);
+    assert!(!cell_info.get().await.subscribed);
+
+    call::<()>(&client, &modem_path, SIGNAL, "Setup", &(5u32,)).await.unwrap();
+    wait_for(Some(-67.0)).await;
+
+    ofono.cell_changed("/ril_0/cell_0", "rsrp", 75).await;
+    wait_for(Some(-75.0)).await;
+
+    call::<()>(&client, &modem_path, SIGNAL, "Setup", &(0u32,)).await.unwrap();
+    wait_for(None).await;
+    assert!(!cell_info.get().await.subscribed);
+}

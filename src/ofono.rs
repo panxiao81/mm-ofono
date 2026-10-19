@@ -82,6 +82,9 @@ pub enum Signal {
     Sms { text: String, info: Props, immediate: bool },
     ContextAdded { path: String, props: Props },
     ContextRemoved { path: String },
+    /// Sailfish CellInfo: cells appear while someone is subscribed.
+    CellsAdded(Vec<String>),
+    CellsRemoved(Vec<String>),
 }
 
 /// Every oFono signal on the modem's path and below, in emission order
@@ -96,7 +99,7 @@ pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<
         let msg = msg.ok()?;
         let header = msg.header();
         let iface = header.interface()?.to_string();
-        if !iface.starts_with("org.ofono.") {
+        if !iface.starts_with("org.ofono.") && !iface.starts_with("org.nemomobile.ofono.Cell") {
             return None;
         }
         match header.member()?.as_str() {
@@ -115,6 +118,11 @@ pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<
             "ContextRemoved" => {
                 let path: OwnedObjectPath = msg.body().deserialize().ok()?;
                 Some(Signal::ContextRemoved { path: path.to_string() })
+            }
+            m @ ("CellsAdded" | "CellsRemoved") => {
+                let paths: Vec<OwnedObjectPath> = msg.body().deserialize().ok()?;
+                let paths = paths.into_iter().map(|p| p.to_string()).collect();
+                Some(if m == "CellsAdded" { Signal::CellsAdded(paths) } else { Signal::CellsRemoved(paths) })
             }
             _ => None,
         }

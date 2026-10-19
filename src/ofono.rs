@@ -82,6 +82,10 @@ pub enum Signal {
     Sms { text: String, info: Props, immediate: bool },
     ContextAdded { path: String, props: Props },
     ContextRemoved { path: String },
+    /// SupplementaryServices: network-initiated USSD, informational or
+    /// expecting a Respond.
+    UssdNotification(String),
+    UssdRequest(String),
     /// Sailfish CellInfo: cells appear while someone is subscribed.
     CellsAdded(Vec<String>),
     CellsRemoved(Vec<String>),
@@ -118,6 +122,10 @@ pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<
             "ContextRemoved" => {
                 let path: OwnedObjectPath = msg.body().deserialize().ok()?;
                 Some(Signal::ContextRemoved { path: path.to_string() })
+            }
+            m @ ("NotificationReceived" | "RequestReceived") => {
+                let text: String = msg.body().deserialize().ok()?;
+                Some(if m == "NotificationReceived" { Signal::UssdNotification(text) } else { Signal::UssdRequest(text) })
             }
             m @ ("CellsAdded" | "CellsRemoved") => {
                 let paths: Vec<OwnedObjectPath> = msg.body().deserialize().ok()?;

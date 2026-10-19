@@ -402,6 +402,17 @@ pub fn scan_result(op: &Props) -> HashMap<String, OwnedVariant> {
     ])
 }
 
+/// MM USSD session state from SupplementaryServices.State.
+pub fn ussd_state(m: &OfonoModem) -> u32 {
+    use crate::mm::MMModem3gppUssdSessionState as ussd;
+    match m.str(crate::mm_ussd::SUPPLEMENTARY, "State") {
+        Some("idle") => ussd::MM_MODEM_3GPP_USSD_SESSION_STATE_IDLE,
+        Some("active") => ussd::MM_MODEM_3GPP_USSD_SESSION_STATE_ACTIVE,
+        Some("user-response") => ussd::MM_MODEM_3GPP_USSD_SESSION_STATE_USER_RESPONSE,
+        _ => ussd::MM_MODEM_3GPP_USSD_SESSION_STATE_UNKNOWN,
+    }
+}
+
 /// ModemManager SIM properties; `None` while no card is inserted.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SimStatus {

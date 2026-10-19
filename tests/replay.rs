@@ -321,3 +321,47 @@ async fn signal_follows_cell_info() {
     wait_for(None).await;
     assert!(!cell_info.get().await.subscribed);
 }
+
+const USSD: &str = "org.freedesktop.ModemManager1.Modem.Modem3gpp.Ussd";
+
+#[tokio::test]
+async fn ussd_round_trip() {
+    use mm::MMModem3gppUssdSessionState as session;
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+    let state = || {
+        let (client, path) = (client.clone(), modem_path.clone());
+        async move { prop::<u32>(&get_all(&client, &path, USSD).await.unwrap(), "State") }
+    };
+    let wait_state = |want: u32| {
+        let state = state.clone();
+        async move {
+            for _ in 0..100 {
+                if state().await == want {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(30)).await;
+            }
+            panic!("USSD state never became {want}");
+        }
+    };
+
+    wait_state(session::MM_MODEM_3GPP_USSD_SESSION_STATE_IDLE).await;
+    let reply: String = call(&client, &modem_path, USSD, "Initiate", &("*100#",)).await.unwrap();
+    assert_eq!(reply, "Balance: 100 JPY");
+
+    // A code oFono handles itself still gets an answer.
+    let reply: String = call(&client, &modem_path, USSD, "Initiate", &("*#21#",)).await.unwrap();
+    assert!(reply.starts_with("CallForwarding: "), "{reply}");
+
+    // Network-initiated request: shown, then answered.
+    ofono.ussd_request("/ril_0", "1: Yes 2: No").await;
+    wait_state(session::MM_MODEM_3GPP_USSD_SESSION_STATE_USER_RESPONSE).await;
+    let props = get_all(&client, &modem_path, USSD).await.unwrap();
+    assert_eq!(prop::<String>(&props, "NetworkRequest"), "1: Yes 2: No");
+    let reply: String = call(&client, &modem_path, USSD, "Respond", &("1",)).await.unwrap();
+    assert_eq!(reply, "You chose 1");
+    wait_state(session::MM_MODEM_3GPP_USSD_SESSION_STATE_IDLE).await;
+}

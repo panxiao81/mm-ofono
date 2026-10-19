@@ -22,13 +22,14 @@ use crate::mm_messaging::{self, Messaging};
 use crate::mm_modem::Modem;
 use crate::mm_signal::ModemSignal;
 use crate::mm_sms::SmsData;
+use crate::mm_ussd::{SUPPLEMENTARY, Ussd, UssdStatus};
 use crate::signal::{self, CELL, CELL_INFO, Cell};
 use crate::mm_sim::Sim;
 use crate::ofono::{self, MODEM, Props, Signal};
 use crate::{MM_PATH, objects};
 
 /// oFono interfaces whose properties feed the ModemManager objects.
-const TRACKED: [&str; 5] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN];
+const TRACKED: [&str; 6] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN, SUPPLEMENTARY];
 
 // ModemManager never reuses object indexes.
 static NEXT_MODEM: AtomicU32 = AtomicU32::new(0);
@@ -58,6 +59,8 @@ pub fn spawn(conn: Connection, path: String, props: Props) -> mpsc::UnboundedSen
         pending_sms: vec![],
         contexts: Contexts::default(),
         cells: HashMap::new(),
+        ussd_notification: String::new(),
+        ussd_request: String::new(),
     };
     tokio::spawn(task.run(props, rx));
     tx
@@ -78,6 +81,9 @@ struct Task {
     contexts: Contexts,
     /// Cells reported by CellInfo while subscribed.
     cells: HashMap<String, Cell>,
+    /// The last network-initiated USSD texts (not oFono properties).
+    ussd_notification: String,
+    ussd_request: String,
 }
 
 impl Task {
@@ -190,6 +196,8 @@ impl Task {
             }
             Signal::Property { .. } => {}
             Signal::Sms { text, info, immediate } => self.received_sms(text, info, immediate).await,
+            Signal::UssdNotification(text) => self.ussd_notification = text,
+            Signal::UssdRequest(text) => self.ussd_request = text,
             Signal::CellsAdded(paths) => paths.iter().for_each(|p| self.fetch_cell(p)),
             Signal::CellsRemoved(paths) => paths.iter().for_each(|p| drop(self.cells.remove(p))),
             Signal::ContextAdded { path, props } => drop(self.contexts.lock().unwrap().insert(path, props)),
@@ -287,6 +295,7 @@ impl Task {
                 server.at(&path, Messaging { ofono_path: ofono_path.clone(), messages: vec![] }).await?;
                 server.at(&path, Simple { ofono_path, contexts }).await?;
                 server.at(&path, ModemSignal { task: Some(self.events.clone()), ..Default::default() }).await?;
+                server.at(&path, Ussd { ofono_path: self.path.clone(), ..Default::default() }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
                 for sms in std::mem::take(&mut self.pending_sms) {
                     mm_messaging::deliver(&self.conn, &path, sms).await?;
@@ -308,6 +317,13 @@ impl Task {
                     let b = server.interface::<_, Bearer>(&bearer).await?;
                     b.get().await.refresh(b.signal_emitter()).await?;
                 }
+                let ussd = UssdStatus {
+                    state: derive::ussd_state(&self.ofono),
+                    network_notification: self.ussd_notification.clone(),
+                    network_request: self.ussd_request.clone(),
+                };
+                let iface_ussd = server.interface::<_, Ussd>(path).await?;
+                iface_ussd.get().await.apply(iface_ussd.signal_emitter(), ussd).await?;
                 let values = signal::values(self.cells.values());
                 let iface_signal = server.interface::<_, ModemSignal>(path).await?;
                 objects::update(&self.conn, &iface_signal, |s| s.values = values).await?;

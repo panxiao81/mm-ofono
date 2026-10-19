@@ -271,6 +271,61 @@ impl ConnectionContext {
     async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
 }
 
+/// oFono's SupplementaryServices: "*100#" is a USSD balance query, "*#21#"
+/// a call forwarding query oFono answers itself.
+#[derive(Default)]
+pub struct SupplementaryServices {
+    props: Props,
+}
+
+impl SupplementaryServices {
+    async fn set_state(&mut self, em: &SignalEmitter<'_>, state: &str) {
+        self.props.insert("State".into(), ov(state));
+        Self::property_changed(em, "State", &state.into()).await.unwrap();
+    }
+}
+
+#[interface(name = "org.ofono.SupplementaryServices")]
+impl SupplementaryServices {
+    fn get_properties(&self) -> Props {
+        copy(&self.props)
+    }
+
+    async fn initiate(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>, command: String) -> (String, OwnedVariant) {
+        self.set_state(&em, "active").await;
+        let reply = match command.as_str() {
+            "*#21#" => ("CallForwarding".to_owned(), ov(("interrogation", "VoiceUnconditional"))),
+            _ => ("USSD".to_owned(), ov("Balance: 100 JPY")),
+        };
+        self.set_state(&em, "idle").await;
+        reply
+    }
+
+    async fn respond(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>, reply: String) -> String {
+        self.set_state(&em, "idle").await;
+        format!("You chose {reply}")
+    }
+
+    async fn cancel(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>) {
+        self.set_state(&em, "idle").await;
+    }
+
+    #[zbus(signal)]
+    async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    pub async fn request_received(em: &SignalEmitter<'_>, message: &str) -> zbus::Result<()>;
+}
+
+impl Bag for SupplementaryServices {
+    fn props(&mut self) -> &mut Props {
+        &mut self.props
+    }
+    async fn emit(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()> {
+        Self::property_changed(em, name, value).await
+    }
+}
+
 /// Sailfish CellInfo: subscribing (GetCells) first returns nothing, then
 /// announces the cells, like the real one.
 #[derive(Default)]
@@ -450,7 +505,7 @@ impl FakeOfono {
                 }
             };
         }
-        dispatch!(OfonoModem, SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager);
+        dispatch!(OfonoModem, SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager, SupplementaryServices);
     }
 
     /// Plays `events` in order. An interface that appears gets the props of
@@ -505,7 +560,7 @@ impl FakeOfono {
             let server = self.conn.object_server();
             let n = iface;
             macro_rules! has { ($($ty:ident),*) => { false $(|| (n == <$ty as Interface>::name().as_str() && server.interface::<_, $ty>(path).await.is_ok()))* } }
-            has!(SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager)
+            has!(SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager, SupplementaryServices)
         };
         if !exists {
             self.update(path, iface, initial, false).await;
@@ -563,6 +618,14 @@ impl FakeOfono {
         let c = self.conn.object_server().interface::<_, Cell>(cell).await.unwrap();
         c.get_mut().await.props.insert(name.to_owned(), ov(value));
         Cell::property_changed(c.signal_emitter(), name, &value.into()).await.unwrap();
+    }
+
+    /// The network asks the user something (session waits for Respond).
+    pub async fn ussd_request(&self, modem: &str, text: &str) {
+        let ss = self.conn.object_server().interface::<_, SupplementaryServices>(modem).await.unwrap();
+        let em = ss.signal_emitter().clone();
+        ss.get_mut().await.set_state(&em, "user-response").await;
+        SupplementaryServices::request_received(&em, text).await.unwrap();
     }
 
     pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {

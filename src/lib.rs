@@ -11,6 +11,7 @@ pub mod mm_modem;
 pub mod mm_signal;
 pub mod mm_sim;
 pub mod mm_sms;
+pub mod mm_ussd;
 pub mod modem;
 pub mod objects;
 pub mod ofono;

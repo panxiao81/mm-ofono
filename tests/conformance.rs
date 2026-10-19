@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use mm_ofono::manager::Manager;
+use mm_ofono::{manager::Manager, mm_modem::Modem, mm_sim::Sim};
 use zbus::object_server::Interface;
 use zbus_xml::{Arg, ArgDirection, Node};
 
@@ -68,4 +68,14 @@ fn assert_conforms<I: Interface>(iface: &I) {
 #[test]
 fn manager() {
     assert_conforms(&Manager);
+}
+
+#[test]
+fn sim() {
+    assert_conforms(&Sim::default());
+}
+
+#[test]
+fn modem() {
+    assert_conforms(&Modem::default());
 }

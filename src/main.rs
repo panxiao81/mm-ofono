@@ -1,19 +1,16 @@
-use mm_ofono::{MM_PATH, MM_SERVICE, manager::Manager};
-use zbus::{connection, fdo::ObjectManager};
+use mm_ofono::{MM_SERVICE, run, serve};
+use zbus::connection;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> zbus::Result<()> {
     tracing_subscriber::fmt::init();
 
+    let conn = connection::Builder::system()?.build().await?;
+    serve(&conn).await?;
     // Claim the name right away like real ModemManager; modems show up later
     // through ObjectManager.InterfacesAdded.
-    let _conn = connection::Builder::system()?
-        .serve_at(MM_PATH, ObjectManager)?
-        .serve_at(MM_PATH, Manager)?
-        .name(MM_SERVICE)?
-        .build()
-        .await?;
+    conn.request_name(MM_SERVICE).await?;
     tracing::info!("serving {MM_SERVICE}");
 
-    std::future::pending().await
+    run(conn).await
 }

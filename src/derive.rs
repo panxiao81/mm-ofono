@@ -10,6 +10,7 @@ use crate::mm::{
     MMModemMode as mode, MMModemPowerState as power, MMModemState as state,
     MMModemStateFailedReason as failed,
 };
+use crate::device::PhysicalDevice;
 use crate::ofono::{Iface, MODEM};
 
 pub const SIM_MANAGER: &str = "org.ofono.SimManager";
@@ -43,7 +44,7 @@ impl OfonoModem {
         }
     }
 
-    fn strings(&self, iface: &str, key: &str) -> Vec<String> {
+    pub fn strings(&self, iface: &str, key: &str) -> Vec<String> {
         match self.get(iface, key) {
             Some(Value::Array(a)) => a
                 .iter()
@@ -73,7 +74,7 @@ impl OfonoModem {
 }
 
 /// ModemManager properties that follow from oFono state.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ModemStatus {
     pub state: state::Type,
     pub failed_reason: failed::Type,
@@ -169,6 +170,17 @@ pub fn current_modes(supported: &[(u32, u32)], preference: Option<&str>) -> (u32
         .unwrap_or(none)
 }
 
+/// The oFono technology preference for an MM (allowed, preferred) pair from
+/// `supported`. oFono can't express "no preference", so a NONE preference is
+/// taken as preferring the highest allowed mode.
+pub fn preference_for(supported: &[(u32, u32)], (allowed, preferred): (u32, u32)) -> Option<&'static str> {
+    let (allowed, _) = supported
+        .iter()
+        .find(|&&(a, p)| a == allowed && (p == preferred || preferred == mode::MM_MODEM_MODE_NONE))?;
+    let top = 1 << (u32::BITS - 1 - allowed.leading_zeros());
+    RATS.iter().find(|r| r.1 == top).map(|r| r.0)
+}
+
 pub fn status(m: &OfonoModem) -> ModemStatus {
     let powered = m.bool(MODEM, "Powered") == Some(true);
     let online = m.bool(MODEM, "Online") == Some(true);
@@ -247,6 +259,57 @@ pub fn status(m: &OfonoModem) -> ModemStatus {
         current_modes: current,
         revision: m.str(MODEM, "Revision").unwrap_or_default().to_owned(),
         equipment_identifier: m.str(MODEM, "Serial").unwrap_or_default().to_owned(),
+    }
+}
+
+/// ModemManager's identity properties for one modem.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Identity {
+    pub manufacturer: String,
+    pub model: String,
+    pub hardware_revision: String,
+    pub device: String,
+    pub drivers: Vec<String>,
+    pub primary_port: String,
+    pub ports: Vec<(String, u32)>,
+    pub device_identifier: String,
+}
+
+/// oFono's own values win; the hardware found by device discovery fills the
+/// rest. The control "port" is the oFono modem (a vendor RIL slot), named
+/// like a port: `/ril_0` -> `ril_0`.
+pub fn identity(m: &OfonoModem, path: &str, dev: Option<&PhysicalDevice>) -> Identity {
+    use sha1::{Digest, Sha1};
+    use crate::mm::MMModemPortType as port;
+
+    let pick = |ofono_key, hw: Option<&String>| {
+        m.str(MODEM, ofono_key).map(str::to_owned).or_else(|| hw.cloned()).unwrap_or_default()
+    };
+    let manufacturer = pick("Manufacturer", dev.and_then(|d| d.manufacturer.as_ref()));
+    let model = pick("Model", dev.and_then(|d| d.model.as_ref()));
+    let revision = m.str(MODEM, "Revision").unwrap_or_default();
+
+    let primary_port = path.trim_start_matches('/').to_owned();
+    let mut ports = vec![(primary_port.clone(), port::MM_MODEM_PORT_TYPE_UNKNOWN)];
+    if let Some(d) = dev {
+        ports.push((d.net_port.clone(), port::MM_MODEM_PORT_TYPE_NET));
+    }
+
+    // Like ModemManager: a hash of what identifies the hardware and firmware,
+    // stable across reboots and SIM changes, shared by identical devices.
+    let ids = dev.and_then(|d| d.ids.as_deref()).unwrap_or_default();
+    let digest = Sha1::digest([ids, revision, &manufacturer, &model].join("\n"));
+    let device_identifier = digest.iter().map(|b| format!("{b:02x}")).collect();
+
+    Identity {
+        hardware_revision: dev.and_then(|d| d.hw_revision.clone()).unwrap_or_default(),
+        device: dev.map(|d| d.sysfs.clone()).unwrap_or_default(),
+        drivers: dev.map(|d| d.drivers.clone()).unwrap_or_default(),
+        manufacturer,
+        model,
+        primary_port,
+        ports,
+        device_identifier,
     }
 }
 
@@ -382,6 +445,40 @@ mod tests {
         assert_eq!(current_modes(&supported, Some("any")), (g4 | g5, g5));
         assert_eq!(current_modes(&supported, Some("umts")), (0, 0));
         assert_eq!(current_modes(&supported, None), (0, 0));
+
+        let supported = supported_modes(&all);
+        assert_eq!(preference_for(&supported, (g2 | g3 | g4, g4)), Some("lte"));
+        assert_eq!(preference_for(&supported, (g2 | g3 | g4, 0)), Some("lte"));
+        assert_eq!(preference_for(&supported, (g2, 0)), Some("gsm"));
+        assert_eq!(preference_for(&supported, (g2 | g3 | g4, g3)), None); // oFono can't prefer a lower RAT
+        assert_eq!(preference_for(&supported, (g4, 0)), None); // 4G-only isn't expressible either
+    }
+
+    #[test]
+    fn identity_prefers_ofono_then_hardware() {
+        let dev = PhysicalDevice {
+            sysfs: "/sys/devices/platform/soc/1c10000.qcom,pcie/pci0002:00/0002:00:00.0/0002:01:00.0".into(),
+            drivers: vec!["mhi".into(), "mhi_netdev".into()],
+            net_port: "rmnet_mhi0".into(),
+            ids: Some("17cb:0306:17cb:010c".into()),
+            hw_revision: Some("0x00".into()),
+            manufacturer: Some("Qualcomm Technologies, Inc".into()),
+            model: Some("SDX55 [Snapdragon X55 5G]".into()),
+        };
+        let m = modem(&[(MODEM, "Revision", "sdx55.rmtefs-484436-87".into())]);
+        let id = identity(&m, "/ril_0", Some(&dev));
+        assert_eq!(id.manufacturer, "Qualcomm Technologies, Inc");
+        assert_eq!(id.model, "SDX55 [Snapdragon X55 5G]");
+        assert_eq!(id.device, dev.sysfs);
+        assert_eq!(id.primary_port, "ril_0");
+        assert_eq!(id.ports, [("ril_0".into(), 1), ("rmnet_mhi0".into(), 2)]);
+        assert_eq!(id.device_identifier.len(), 40);
+        // Both SIM slots of one modem are the same device.
+        assert_eq!(identity(&m, "/ril_1", Some(&dev)).device_identifier, id.device_identifier);
+
+        let m = modem(&[(MODEM, "Manufacturer", "Acme".into())]);
+        assert_eq!(identity(&m, "/ril_0", Some(&dev)).manufacturer, "Acme");
+        assert_eq!(identity(&m, "/ril_0", None).model, "");
     }
 
     #[test]

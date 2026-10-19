@@ -83,10 +83,15 @@ pub fn call_data(props: &Props, prev: Option<&CallData>) -> CallData {
     }
 }
 
-/// How a call that oFono dropped ended, from its DisconnectReason.
+/// How a call that oFono dropped ended, from its DisconnectReason. oFono's
+/// "remote" doesn't say whether the other side refused or hung up, but an
+/// outgoing call that never got past ringing can only have been refused
+/// (or the line was busy).
 pub fn ended(prev: &CallData, disconnect_reason: Option<&str>) -> CallData {
+    let unanswered = prev.state == st::MM_CALL_STATE_DIALING as i32 || prev.state == st::MM_CALL_STATE_RINGING_OUT as i32;
     let reason = match disconnect_reason {
         Some("network") => why::MM_CALL_STATE_REASON_ERROR,
+        Some("remote") if unanswered => why::MM_CALL_STATE_REASON_REFUSED_OR_BUSY,
         _ => why::MM_CALL_STATE_REASON_TERMINATED,
     };
     CallData { state: st::MM_CALL_STATE_TERMINATED as i32, reason: reason as i32, ..prev.clone() }
@@ -153,6 +158,10 @@ mod tests {
         let resumed = call_data(&props("active", ""), Some(&held));
         assert_ne!(resumed.reason, why::MM_CALL_STATE_REASON_ACCEPTED as i32, "resuming isn't accepting");
         assert_eq!(ended(&d, Some("network")).reason, why::MM_CALL_STATE_REASON_ERROR as i32);
+        assert_eq!(ended(&d, Some("remote")).reason, why::MM_CALL_STATE_REASON_TERMINATED as i32, "answered, then hung up");
+        let ringing = call_data(&props("alerting", ""), None);
+        assert_eq!(ended(&ringing, Some("remote")).reason, why::MM_CALL_STATE_REASON_REFUSED_OR_BUSY as i32, "declined");
+        assert_eq!(ended(&ringing, Some("local")).reason, why::MM_CALL_STATE_REASON_TERMINATED as i32, "we gave up");
     }
 
     #[test]

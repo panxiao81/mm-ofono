@@ -3,7 +3,9 @@ use zbus::connection;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> zbus::Result<()> {
-    tracing_subscriber::fmt::init();
+    // Plain text under systemd (the journal adds its own timestamps).
+    let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    tracing_subscriber::fmt().with_ansi(tty).without_time().init();
 
     let conn = connection::Builder::system().build().await?;
     serve(&conn).await?;

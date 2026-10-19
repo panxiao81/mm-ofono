@@ -61,11 +61,14 @@ impl OfonoModem {
         self.ifaces.contains_key(iface)
     }
 
-    /// Enough is known to show this modem: power state and, once oFono has
-    /// the SIM interface, whether a card is inserted. Exporting earlier made
-    /// clients see a SIM-less modem at boot.
+    /// Enough is known to show this modem: power state, whether a SIM is
+    /// inserted, and the initial properties of every interface oFono lists.
+    /// Exporting earlier made clients see a SIM-less modem at boot, or a
+    /// state that changes a moment later.
     pub fn ready(&self) -> bool {
-        self.bool(MODEM, "Powered").is_some() && self.bool(SIM_MANAGER, "Present").is_some()
+        self.bool(MODEM, "Powered").is_some()
+            && self.bool(SIM_MANAGER, "Present").is_some()
+            && self.ifaces.values().all(|i| i.fetched)
     }
 
     pub fn sim_present(&self) -> bool {
@@ -345,11 +348,9 @@ mod tests {
     fn modem(props: &[(&str, &str, Variant<'static>)]) -> OfonoModem {
         let mut m = OfonoModem::default();
         for (iface, key, value) in props {
-            m.ifaces
-                .entry(iface.to_string())
-                .or_default()
-                .props
-                .insert(key.to_string(), OwnedVariant::try_from(value.clone()).unwrap());
+            let iface = m.ifaces.entry(iface.to_string()).or_default();
+            iface.fetched = true;
+            iface.props.insert(key.to_string(), OwnedVariant::try_from(value.clone()).unwrap());
         }
         m
     }
@@ -362,8 +363,11 @@ mod tests {
     fn not_ready_until_sim_presence_is_known() {
         let m = modem(&[(MODEM, "Powered", true.into())]);
         assert!(!m.ready());
-        let m = modem(&[(MODEM, "Powered", true.into()), (SIM_MANAGER, "Present", false.into())]);
+        let mut m = modem(&[(MODEM, "Powered", true.into()), (SIM_MANAGER, "Present", false.into())]);
         assert!(m.ready());
+        // NetworkRegistration just appeared and its GetProperties is in flight.
+        m.ifaces.insert(NETREG.into(), Default::default());
+        assert!(!m.ready());
     }
 
     #[test]

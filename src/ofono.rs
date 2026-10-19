@@ -84,6 +84,8 @@ pub async fn property_changes(
 pub struct Iface {
     pub props: Props,
     changed_since_fetch: HashSet<String>,
+    /// A GetProperties reply has been applied at least once.
+    pub fetched: bool,
 }
 
 impl Iface {
@@ -99,6 +101,7 @@ impl Iface {
             }
         }
         self.changed_since_fetch.clear();
+        self.fetched = true;
     }
 }
 

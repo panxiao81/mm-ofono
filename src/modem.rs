@@ -4,11 +4,15 @@
 
 use std::{
     collections::HashMap,
-    sync::atomic::{AtomicU32, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use futures_util::StreamExt;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 use zbus::{Connection, OwnedObjectPath};
 
@@ -74,9 +78,52 @@ pub enum Event {
 
 /// Start the task for the oFono modem at `path`, announced with `props`.
 /// Send [`Event::Removed`] to stop it; it then unexports its objects.
-pub fn spawn(conn: Connection, path: String, props: Props) -> mpsc::UnboundedSender<Event> {
+/// How long a ready modem waits for lower SIM slots to be announced first.
+const SLOT_ORDER_WAIT: Duration = Duration::from_secs(15);
+
+/// Modems are announced in SIM slot order: gnome-control-center numbers
+/// SIMs in the order modems appear, so slot 1 has to come first even when
+/// slot 2 is ready sooner (an empty slot usually is). One per [`crate::run`].
+pub struct SlotOrder {
+    /// Slot -> announced, for every modem being followed.
+    slots: std::sync::Mutex<std::collections::BTreeMap<u32, bool>>,
+    changed: watch::Sender<()>,
+}
+
+impl SlotOrder {
+    pub fn new() -> Arc<SlotOrder> {
+        Arc::new(SlotOrder { slots: Default::default(), changed: watch::channel(()).0 })
+    }
+
+    fn set(&self, slot: u32, announced: Option<bool>) {
+        let mut slots = self.slots.lock().unwrap();
+        match announced {
+            Some(a) => drop(slots.insert(slot, a)),
+            None => drop(slots.remove(&slot)),
+        }
+        self.changed.send_replace(());
+    }
+
+    /// Every lower slot is announced. ofono-binder numbers slots from
+    /// /ril_0 up, so a lower slot oFono hasn't even added yet (it may add
+    /// slot 2 first) counts as not announced.
+    fn may_announce(&self, slot: u32) -> bool {
+        let slots = self.slots.lock().unwrap();
+        (0..slot).all(|lower| slots.get(&lower) == Some(&true))
+    }
+}
+
+pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<SlotOrder>) -> mpsc::UnboundedSender<Event> {
     let (tx, rx) = mpsc::unbounded_channel();
+    let slot = slot_index(&path);
+    if let Some(slot) = slot {
+        order.set(slot, Some(false));
+    }
     let task = Task {
+        order_changes: order.changed.subscribe(),
+        order,
+        slot,
+        ready_since: None,
         conn,
         path,
         ofono: OfonoModem::default(),
@@ -98,6 +145,11 @@ pub fn spawn(conn: Connection, path: String, props: Props) -> mpsc::UnboundedSen
 }
 
 struct Task {
+    order: Arc<SlotOrder>,
+    order_changes: watch::Receiver<()>,
+    slot: Option<u32>,
+    /// When the modem was first ready to be shown, while it waits its turn.
+    ready_since: Option<Instant>,
     conn: Connection,
     path: String,
     ofono: OfonoModem,
@@ -146,9 +198,16 @@ impl Task {
                     Event::Calls(list) => self.voice_calls.extend(list),
                     Event::Removed => break,
                 },
+                // A lower slot was announced (or went away): maybe our turn.
+                Ok(()) = self.order_changes.changed() => {}
+                // Waiting for our turn: re-check, so the wait can time out.
+                _ = tokio::time::sleep(Duration::from_secs(1)), if self.ready_since.is_some() && self.modem.is_none() => {}
                 else => break,
             }
             self.sync().await;
+        }
+        if let Some(slot) = self.slot {
+            self.order.set(slot, None);
         }
         if let Err(e) = self.unexport().await {
             warn!("{}: unexport: {e}", self.path);
@@ -359,6 +418,14 @@ impl Task {
         if self.modem.is_none() && !self.ofono.ready() {
             return Ok(());
         }
+        if self.modem.is_none() {
+            if let Some(slot) = self.slot {
+                let waited = self.ready_since.get_or_insert_with(Instant::now).elapsed();
+                if !self.order.may_announce(slot) && waited < SLOT_ORDER_WAIT {
+                    return Ok(());
+                }
+            }
+        }
         if self.device.is_none() {
             self.device = device::discover().await;
         }
@@ -403,6 +470,9 @@ impl Task {
                 server.at(&path, Ussd { ofono_path: self.path.clone(), ..Default::default() }).await?;
                 server.at(&path, Voice { ofono_path: self.path.clone(), registry: self.calls.clone(), ..Default::default() }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
+                if let Some(slot) = self.slot {
+                    self.order.set(slot, Some(true));
+                }
                 for sms in std::mem::take(&mut self.pending_sms) {
                     mm_messaging::deliver(&self.conn, &path, sms).await?;
                 }
@@ -498,6 +568,18 @@ impl Task {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slots_are_announced_in_order() {
+        let order = SlotOrder::new();
+        order.set(1, Some(false));
+        assert!(!order.may_announce(1), "slot 1 not even added yet");
+        order.set(0, Some(false));
+        assert!(order.may_announce(0));
+        assert!(!order.may_announce(1));
+        order.set(0, Some(true));
+        assert!(order.may_announce(1));
+    }
 
     #[test]
     fn slot_indexes() {

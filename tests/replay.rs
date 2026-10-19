@@ -48,9 +48,16 @@ fn modem<'a>(objects: &'a Objects, port: &str) -> Option<(&'a OwnedObjectPath, &
         .find(|(_, m)| prop::<String>(m, "PrimaryPort") == port)
 }
 
+/// What a client saw: problems, and the order modems were announced in
+/// (by PrimaryPort).
+struct Seen {
+    problems: Vec<String>,
+    announced: Vec<String>,
+}
+
 /// Start mm-ofono on the bus and watch what clients would see: every
 /// InterfacesAdded must point at a SIM that already exists.
-async fn start_bridge(bus: &Bus) -> (Connection, tokio::task::JoinHandle<Vec<String>>) {
+async fn start_bridge(bus: &Bus) -> (Connection, tokio::task::JoinHandle<Seen>) {
     let mm = bus.connect().await;
     mm_ofono::serve(&mm).await.unwrap();
     mm.request_name(MM_SERVICE).await.unwrap();
@@ -67,15 +74,17 @@ async fn start_bridge(bus: &Bus) -> (Connection, tokio::task::JoinHandle<Vec<Str
     let watcher_conn = client.clone();
     let watcher = tokio::spawn(async move {
         let mut problems = vec![];
+        let mut announced = vec![];
         while let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_secs(3), added.next()).await {
             let (obj, ifaces): (OwnedObjectPath, HashMap<String, HashMap<String, OwnedVariant>>) =
                 msg.body().deserialize().unwrap();
+            announced.push(prop::<String>(&ifaces[MODEM], "PrimaryPort"));
             let sim = path(&ifaces[MODEM], "Sim");
             if sim != "/" && get_all(&watcher_conn, &sim, "org.freedesktop.ModemManager1.Sim").await.is_err() {
                 problems.push(format!("{obj} announced with SIM {sim} that doesn't exist"));
             }
         }
-        problems
+        Seen { problems, announced }
     });
     (client, watcher)
 }
@@ -139,8 +148,11 @@ async fn ct_sim_ofono_restart() {
     );
     assert_eq!(path(ril1, "Sim"), "/");
 
-    let problems = watcher.await.unwrap();
-    assert!(problems.is_empty(), "{problems:#?}");
+    let seen = watcher.await.unwrap();
+    assert!(seen.problems.is_empty(), "{:#?}", seen.problems);
+    // gnome-control-center numbers SIMs in the order modems appear; in this
+    // trace slot 2 (empty) is ready first, yet slot 1 must come first.
+    assert_eq!(seen.announced, ["ril_0", "ril_1"]);
 }
 
 const MESSAGING: &str = "org.freedesktop.ModemManager1.Modem.Messaging";

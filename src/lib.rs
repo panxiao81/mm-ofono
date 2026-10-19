@@ -96,10 +96,11 @@ pub async fn run(conn: Connection) -> zbus::Result<()> {
     let mut removed = manager_signals(&conn, "ModemRemoved").await?;
     let mut modems = Modems::default();
     let mut tasks: HashMap<String, mpsc::UnboundedSender<modem::Event>> = HashMap::new();
+    let order = modem::SlotOrder::new();
 
     let follow = |modems: &mut Modems, tasks: &mut HashMap<_, _>, path: String, owner: &str, props| {
         if modems.added(&path, owner) {
-            tasks.insert(path.clone(), modem::spawn(conn.clone(), path, props));
+            tasks.insert(path.clone(), modem::spawn(conn.clone(), path, props, order.clone()));
         }
     };
     let stop = |tasks: &mut HashMap<String, mpsc::UnboundedSender<modem::Event>>, path: &str| {

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Run cargo inside the dev container: dev/cargo test, dev/cargo build --release, ...
+set -e
+cd "$(dirname "$0")/.."
+docker image inspect mm-ofono-dev >/dev/null 2>&1 || docker build -t mm-ofono-dev dev
+exec docker run --rm -i \
+  -v "$PWD":/src -w /src \
+  -v mm-ofono-cargo:/root/.cargo/registry \
+  -v mm-ofono-target:/target -e CARGO_TARGET_DIR=/target \
+  mm-ofono-dev cargo "$@"

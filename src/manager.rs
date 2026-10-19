@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use zbus::{interface, zvariant::OwnedValue};
+use zbus::{interface, OwnedVariant};
 
 use crate::error::{CoreError, Result};
 
@@ -16,7 +16,7 @@ impl Manager {
         Err(CoreError::Unsupported("use RUST_LOG instead".into()))
     }
 
-    async fn report_kernel_event(&self, _properties: HashMap<String, OwnedValue>) -> Result<()> {
+    async fn report_kernel_event(&self, _properties: HashMap<String, OwnedVariant>) -> Result<()> {
         Err(CoreError::Unsupported("devices come from oFono, not udev".into()))
     }
 

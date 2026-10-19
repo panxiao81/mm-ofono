@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tracing::info;
-use zbus::{Connection, MatchRule, MessageStream, fdo::DBusProxy, message::Type, zvariant::OwnedObjectPath};
+use zbus::{Connection, MatchRule, MessageStream, fdo::DBusProxy, message::Type, OwnedObjectPath};
 
 pub const MM_SERVICE: &str = "org.freedesktop.ModemManager1";
 pub const MM_PATH: &str = "/org/freedesktop/ModemManager1";
@@ -30,10 +30,10 @@ pub async fn serve(conn: &Connection) -> zbus::Result<()> {
 async fn manager_signals(conn: &Connection, member: &'static str) -> zbus::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
-        .interface("org.ofono.Manager")?
-        .member(member)?
-        .path("/")?
-        .build();
+        .interface("org.ofono.Manager")
+        .member(member)
+        .path("/")
+        .build()?;
     MessageStream::for_match_rule(rule, conn, None).await
 }
 

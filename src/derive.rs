@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 use crate::mm::{
     MMModemAccessTechnology as tech, MMModemCapability as cap, MMModemLock as lock,
@@ -26,30 +26,30 @@ pub struct OfonoModem {
 }
 
 impl OfonoModem {
-    fn get(&self, iface: &str, key: &str) -> Option<&Value<'static>> {
+    fn get(&self, iface: &str, key: &str) -> Option<&Variant<'static>> {
         self.ifaces.get(iface)?.props.get(key).map(|v| &**v)
     }
 
     fn str(&self, iface: &str, key: &str) -> Option<&str> {
         match self.get(iface, key)? {
-            Value::Str(s) => Some(s.as_str()),
+            Variant::Str(s) => Some(s.as_str()),
             _ => None,
         }
     }
 
     fn bool(&self, iface: &str, key: &str) -> Option<bool> {
         match self.get(iface, key)? {
-            Value::Bool(b) => Some(*b),
+            Variant::Bool(b) => Some(*b),
             _ => None,
         }
     }
 
     pub fn strings(&self, iface: &str, key: &str) -> Vec<String> {
         match self.get(iface, key) {
-            Some(Value::Array(a)) => a
+            Some(Variant::Array(a)) => a
                 .iter()
                 .filter_map(|v| match v {
-                    Value::Str(s) => Some(s.to_string()),
+                    Variant::Str(s) => Some(s.to_string()),
                     _ => None,
                 })
                 .collect(),
@@ -206,10 +206,10 @@ pub fn status(m: &OfonoModem) -> ModemStatus {
     let registered = st == state::MM_MODEM_STATE_REGISTERED;
 
     let retries = match m.get(SIM_MANAGER, "Retries") {
-        Some(Value::Dict(d)) => d
+        Some(Variant::Dict(d)) => d
             .iter()
             .filter_map(|(k, v)| match (k, v) {
-                (Value::Str(k), Value::U8(n)) => Some((lock_for(k)?, u32::from(*n))),
+                (Variant::Str(k), Variant::U8(n)) => Some((lock_for(k)?, u32::from(*n))),
                 _ => None,
             })
             .collect(),
@@ -217,7 +217,7 @@ pub fn status(m: &OfonoModem) -> ModemStatus {
     };
 
     let strength = match m.get(NETREG, "Strength") {
-        Some(Value::U8(s)) => u32::from(*s),
+        Some(Variant::U8(s)) => u32::from(*s),
         _ => 0,
     };
 
@@ -340,22 +340,22 @@ pub fn sim(m: &OfonoModem) -> Option<SimStatus> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zbus::zvariant::OwnedValue;
+    use zbus::OwnedVariant;
 
-    fn modem(props: &[(&str, &str, Value<'static>)]) -> OfonoModem {
+    fn modem(props: &[(&str, &str, Variant<'static>)]) -> OfonoModem {
         let mut m = OfonoModem::default();
         for (iface, key, value) in props {
             m.ifaces
                 .entry(iface.to_string())
                 .or_default()
                 .props
-                .insert(key.to_string(), OwnedValue::try_from(value.clone()).unwrap());
+                .insert(key.to_string(), OwnedVariant::try_from(value.clone()).unwrap());
         }
         m
     }
 
-    fn strs(v: &[&str]) -> Value<'static> {
-        Value::from(v.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    fn strs(v: &[&str]) -> Variant<'static> {
+        Variant::from(v.iter().map(|s| s.to_string()).collect::<Vec<_>>())
     }
 
     #[test]
@@ -406,7 +406,7 @@ mod tests {
             (MODEM, "Revision", "sdx55.rmtefs-484436-87".into()),
             (SIM_MANAGER, "Present", true.into()),
             (SIM_MANAGER, "PinRequired", "none".into()),
-            (SIM_MANAGER, "Retries", Value::from(retries)),
+            (SIM_MANAGER, "Retries", Variant::from(retries)),
             (NETREG, "Status", "roaming".into()),
             (NETREG, "Technology", "lte".into()),
             (NETREG, "Strength", 40u8.into()),

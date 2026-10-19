@@ -5,7 +5,7 @@ use zbus::connection;
 async fn main() -> zbus::Result<()> {
     tracing_subscriber::fmt::init();
 
-    let conn = connection::Builder::system()?.build().await?;
+    let conn = connection::Builder::system().build().await?;
     serve(&conn).await?;
     // Claim the name right away like real ModemManager; modems show up later
     // through ObjectManager.InterfacesAdded.

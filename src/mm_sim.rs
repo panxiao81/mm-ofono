@@ -13,7 +13,7 @@ pub struct Sim {
 }
 
 impl Sim {
-    async fn call(&self, conn: &Connection, method: &str, args: &(impl serde::Serialize + zbus::zvariant::DynamicType)) -> Result<()> {
+    async fn call(&self, conn: &Connection, method: &str, args: &(impl serde::Serialize + zbus::DynamicType)) -> Result<()> {
         conn.call_method(Some(crate::ofono::SERVICE), self.ofono_path.as_str(), Some(SIM_MANAGER), method, args)
             .await?;
         Ok(())

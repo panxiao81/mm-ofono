@@ -8,13 +8,13 @@ use futures_util::{Stream, StreamExt};
 use zbus::{
     Connection, MatchRule, MessageStream,
     message::Type,
-    zvariant::{OwnedObjectPath, OwnedValue, Value},
+    {OwnedObjectPath, OwnedVariant, Variant},
 };
 
 pub const SERVICE: &str = "org.ofono";
 pub const MODEM: &str = "org.ofono.Modem";
 
-pub type Props = HashMap<String, OwnedValue>;
+pub type Props = HashMap<String, OwnedVariant>;
 
 pub async fn get_modems(conn: &Connection) -> zbus::Result<Vec<(OwnedObjectPath, Props)>> {
     conn.call_method(Some(SERVICE), "/", Some("org.ofono.Manager"), "GetModems", &())
@@ -35,7 +35,7 @@ pub async fn set_property(
     path: &str,
     iface: &str,
     key: &str,
-    value: Value<'_>,
+    value: Variant<'_>,
 ) -> zbus::Result<()> {
     conn.call_method(Some(SERVICE), path, Some(iface), "SetProperty", &(key, value))
         .await?;
@@ -47,7 +47,7 @@ pub async fn set_property(
 pub struct Change {
     pub iface: String,
     pub key: String,
-    pub value: OwnedValue,
+    pub value: OwnedVariant,
 }
 
 /// `PropertyChanged` from every interface of one modem, in emission order
@@ -58,9 +58,9 @@ pub async fn property_changes(
 ) -> zbus::Result<impl Stream<Item = Change> + use<>> {
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
-        .path(path.to_owned())?
-        .member("PropertyChanged")?
-        .build();
+        .path(path.to_owned())
+        .member("PropertyChanged")
+        .build()?;
     let stream = MessageStream::for_match_rule(rule, conn, None).await?;
     Ok(stream.filter_map(|msg| async move {
         let msg = msg.ok()?;
@@ -68,7 +68,7 @@ pub async fn property_changes(
         if !iface.starts_with("org.ofono.") {
             return None;
         }
-        let (key, value): (String, OwnedValue) = msg.body().deserialize().ok()?;
+        let (key, value): (String, OwnedVariant) = msg.body().deserialize().ok()?;
         Some(Change { iface, key, value })
     }))
 }
@@ -87,7 +87,7 @@ pub struct Iface {
 }
 
 impl Iface {
-    pub fn change(&mut self, key: String, value: OwnedValue) {
+    pub fn change(&mut self, key: String, value: OwnedVariant) {
         self.changed_since_fetch.insert(key.clone());
         self.props.insert(key, value);
     }
@@ -106,8 +106,8 @@ impl Iface {
 mod tests {
     use super::*;
 
-    fn v(s: &str) -> OwnedValue {
-        Value::from(s).try_into().unwrap()
+    fn v(s: &str) -> OwnedVariant {
+        Variant::from(s).try_into().unwrap()
     }
 
     #[test]

@@ -14,19 +14,19 @@ use std::{
 use zbus::{
     Connection, ObjectServer, fdo, interface,
     object_server::{Interface, InterfaceRef, SignalEmitter},
-    zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value},
+    {ObjectPath, OwnedObjectPath, OwnedVariant, Variant},
 };
 
 use crate::{MM_PATH, mm_modem::Modem};
 
-pub type IfaceProps = HashMap<String, HashMap<String, OwnedValue>>;
+pub type IfaceProps = HashMap<String, HashMap<String, OwnedVariant>>;
 
 #[derive(Debug, Default)]
 pub struct ModemObjects {
     modems: HashSet<OwnedObjectPath>,
 }
 
-async fn props_of<I: Interface>(server: &ObjectServer, conn: &Connection, path: &ObjectPath<'_>) -> fdo::Result<Option<HashMap<String, OwnedValue>>> {
+async fn props_of<I: Interface>(server: &ObjectServer, conn: &Connection, path: &ObjectPath<'_>) -> fdo::Result<Option<HashMap<String, OwnedVariant>>> {
     let Ok(iface) = server.interface::<_, I>(path).await else { return Ok(None) };
     let props = iface.get().await.get_all(server, conn, None, iface.signal_emitter()).await?;
     Ok(Some(props))
@@ -94,7 +94,7 @@ pub async fn update<I: Interface>(conn: &Connection, iface: &InterfaceRef<I>, f:
     let mut changed = HashMap::new();
     for (name, value) in &after {
         if before.get(name) != Some(value) {
-            changed.insert(name.as_str(), Value::from(value.try_clone()?));
+            changed.insert(name.as_str(), Variant::from(value.try_clone()?));
         }
     }
     if changed.is_empty() {

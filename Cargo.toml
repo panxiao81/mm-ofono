@@ -6,18 +6,21 @@ description = "ModemManager D-Bus API on top of oFono"
 
 [dependencies]
 futures-util = "0.3"
-rtnetlink = "0.20"
+rtnetlink = "0.23"
 serde = "1"
-sha1 = "0.10"
+sha1 = "0.11"
 tokio = { version = "1", features = ["rt", "macros"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 udev = "0.9"
-zbus = { version = "5", default-features = false, features = ["tokio"] }
+# No "object-manager": our own ObjectManager decides what is managed (only
+# modems, like ModemManager); zbus's would announce every object under it.
+zbus = { version = "6", default-features = false, features = ["tokio", "proxy", "service", "tracing"] }
 
 [dev-dependencies]
-zbus_xml = "5"
+serde_json = "1"
+zbus_xml = "6"
 
 [build-dependencies]
-bindgen = "0.72"
+bindgen = "0.73"
 pkg-config = "0.3"

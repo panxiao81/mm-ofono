@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use zbus::{
     Connection, interface,
     object_server::SignalEmitter,
-    zvariant::{OwnedObjectPath, OwnedValue, Value},
+    {OwnedObjectPath, OwnedVariant, Variant},
 };
 
 use crate::derive::{self, Identity, ModemStatus, RADIO};
@@ -22,7 +22,7 @@ pub struct Modem {
 }
 
 impl Modem {
-    async fn set(&self, conn: &Connection, iface: &str, key: &str, value: Value<'_>) -> Result<()> {
+    async fn set(&self, conn: &Connection, iface: &str, key: &str, value: Variant<'_>) -> Result<()> {
         Ok(ofono::set_property(conn, &self.ofono_path, iface, key, value).await?)
     }
 
@@ -46,7 +46,7 @@ impl Modem {
         vec![]
     }
 
-    async fn create_bearer(&self, _properties: HashMap<String, OwnedValue>) -> Result<OwnedObjectPath> {
+    async fn create_bearer(&self, _properties: HashMap<String, OwnedVariant>) -> Result<OwnedObjectPath> {
         Err(CoreError::Unsupported("bearers are not implemented yet".into()))
     }
 
@@ -93,7 +93,7 @@ impl Modem {
         Err(CoreError::Unsupported("SIM slot switching is not implemented yet".into()))
     }
 
-    async fn get_cell_info(&self) -> Result<Vec<HashMap<String, OwnedValue>>> {
+    async fn get_cell_info(&self) -> Result<Vec<HashMap<String, OwnedVariant>>> {
         Err(CoreError::Unsupported("cell info is not implemented yet".into()))
     }
 

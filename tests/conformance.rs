@@ -41,7 +41,7 @@ fn members(xml: &str, iface_name: &str) -> BTreeSet<String> {
         out.insert(format!("signal {}({})", s.name(), sig(s.args(), None)));
     }
     for p in iface.properties() {
-        out.insert(format!("property {}: {} {:?}", p.name(), p.ty().inner(), p.access()));
+        out.insert(format!("property {}: {} {:?}", p.name(), p.ty(), p.access()));
     }
     out
 }

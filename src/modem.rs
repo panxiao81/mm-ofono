@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use zbus::{Connection, zvariant::OwnedObjectPath};
+use zbus::{Connection, OwnedObjectPath};
 
 use crate::derive::{self, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE};
 use crate::device::{self, PhysicalDevice};

@@ -723,6 +723,12 @@ impl FakeOfono {
         copy(&ctx.get().await.props)
     }
 
+    /// Set properties on an oFono interface of `modem`, announcing each.
+    pub async fn set(&self, modem: &str, iface: &str, props: Vec<(&str, Variant<'static>)>) {
+        let props = props.into_iter().map(|(k, v)| (k.to_owned(), ov(v))).collect();
+        self.update(modem, iface, props, true).await;
+    }
+
     pub async fn cell_info(&self, modem: &str) -> zbus::object_server::InterfaceRef<CellInfo> {
         let server = self.conn.object_server();
         if server.interface::<_, CellInfo>(modem).await.is_err() {

@@ -35,8 +35,32 @@ use crate::{MM_PATH, objects};
 const TRACKED: [&str; 6] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN, SUPPLEMENTARY];
 
 // ModemManager never reuses object indexes.
-static NEXT_MODEM: AtomicU32 = AtomicU32::new(0);
 static NEXT_SIM: AtomicU32 = AtomicU32::new(0);
+
+/// Indexes below this are kept for SIM slots (see [`modem_index`]).
+const SLOT_INDEXES: u32 = 16;
+static NEXT_MODEM: AtomicU32 = AtomicU32::new(SLOT_INDEXES);
+static USED_SLOT_INDEXES: std::sync::Mutex<u32> = std::sync::Mutex::new(0);
+
+/// The SIM slot an oFono modem drives: ofono-binder names them /ril_0,
+/// /ril_1, ... for slots 1, 2, ...
+pub fn slot_index(ofono_path: &str) -> Option<u32> {
+    ofono_path.strip_prefix("/ril_")?.parse().ok().filter(|i| *i < SLOT_INDEXES)
+}
+
+/// A modem object index that is never reused (as in ModemManager), but is
+/// the SIM slot's own number the first time, so Modem/0 is slot 1, Modem/1
+/// slot 2, whichever comes up first; clients list SIMs in this order.
+fn modem_index(ofono_path: &str) -> u32 {
+    if let Some(i) = slot_index(ofono_path) {
+        let mut used = USED_SLOT_INDEXES.lock().unwrap();
+        if *used & (1 << i) == 0 {
+            *used |= 1 << i;
+            return i;
+        }
+    }
+    NEXT_MODEM.fetch_add(1, Ordering::Relaxed)
+}
 
 pub enum Event {
     Snapshot(String, Props),
@@ -329,8 +353,11 @@ impl Task {
     }
 
     async fn try_sync(&mut self) -> zbus::Result<()> {
-        if !self.ofono.ready() {
-            return self.unexport().await;
+        // Wait for a consistent first picture before showing the modem. Once
+        // shown, it stays for as long as oFono has it: a SIM change makes it
+        // fail and recover rather than vanish and come back as another modem.
+        if self.modem.is_none() && !self.ofono.ready() {
+            return Ok(());
         }
         if self.device.is_none() {
             self.device = device::discover().await;
@@ -362,7 +389,7 @@ impl Task {
         let sim_path = sim.as_ref().and(self.sim.clone());
         match &self.modem {
             None => {
-                let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{}", NEXT_MODEM.fetch_add(1, Ordering::Relaxed)))?;
+                let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{}", modem_index(&self.path)))?;
                 info!("{}: exporting {path} (state {})", self.path, status.state);
                 let ofono_path = self.path.clone();
                 let contexts = self.contexts.clone();
@@ -465,5 +492,22 @@ impl Task {
             self.conn.object_server().remove::<Sim, _>(&path).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slot_indexes() {
+        assert_eq!(slot_index("/ril_0"), Some(0));
+        assert_eq!(slot_index("/ril_1"), Some(1));
+        assert_eq!(slot_index("/phonesim"), None);
+        assert_eq!(slot_index("/ril_99"), None);
+        // First use: the slot's own index; never again after that.
+        assert_eq!(modem_index("/ril_5"), 5);
+        assert!(modem_index("/ril_5") >= SLOT_INDEXES);
+        assert!(modem_index("/phonesim") >= SLOT_INDEXES);
     }
 }

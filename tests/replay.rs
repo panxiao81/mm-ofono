@@ -465,3 +465,38 @@ async fn voice_incoming_call() {
     let listed: Vec<OwnedObjectPath> = self::call(&client, &modem_path, VOICE, "ListCalls", &()).await.unwrap();
     assert_eq!(listed, [call]);
 }
+
+/// Pulling and reinserting the SIM keeps the same modem object (clients
+/// number SIMs by modem), which goes failed and recovers.
+#[tokio::test]
+async fn sim_swap_keeps_the_modem() {
+    use mm::{MMModemState as state, MMModemStateFailedReason as failed};
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+    let full: Vec<String> = [
+        "org.ofono.VoiceCallManager", "org.ofono.SimManager", "org.ofono.NetworkRegistration",
+        "org.ofono.RadioSettings", "org.ofono.ConnectionManager",
+    ]
+    .map(String::from)
+    .into();
+    let sim_only: Vec<String> = vec!["org.ofono.VoiceCallManager".into(), "org.ofono.SimManager".into()];
+
+    // Pulled: oFono drops the network interfaces and reports no card.
+    ofono.set("/ril_0", "org.ofono.SimManager", vec![("Present", false.into())]).await;
+    ofono.set("/ril_0", "org.ofono.Modem", vec![("Interfaces", sim_only.into())]).await;
+    let objects = settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_FAILED)).await;
+    let (obj, m) = modem(&objects, "ril_0").unwrap();
+    assert_eq!(obj.as_str(), modem_path, "same modem object");
+    assert_eq!(prop::<u32>(m, "StateFailedReason"), failed::MM_MODEM_STATE_FAILED_REASON_SIM_MISSING);
+    assert_eq!(path(m, "Sim"), "/");
+
+    // Reinserted.
+    ofono.set("/ril_0", "org.ofono.SimManager", vec![("Present", true.into())]).await;
+    ofono.set("/ril_0", "org.ofono.Modem", vec![("Interfaces", full.into())]).await;
+    let objects = settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_REGISTERED)).await;
+    let (obj, m) = modem(&objects, "ril_0").unwrap();
+    assert_eq!(obj.as_str(), modem_path, "still the same modem object");
+    assert_ne!(path(m, "Sim"), "/");
+}

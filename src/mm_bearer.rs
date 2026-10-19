@@ -12,7 +12,7 @@ use std::{
 
 use zbus::{Connection, ObjectServer, OwnedObjectPath, OwnedVariant, interface, object_server::SignalEmitter};
 
-use crate::bearer::{self, CONTEXT, Request, Status};
+use crate::bearer::{self, CONTEXT, Contexts, Request, Status};
 use crate::derive::{CONNMAN, NETREG, SIM_MANAGER};
 use crate::error::{CoreError, Result};
 use crate::mm::MMBearerType as bearer_type;
@@ -30,14 +30,15 @@ pub struct Bearer {
     pub ofono_path: String,
     pub context: String,
     pub request: Request,
+    pub contexts: Contexts,
     /// Behind a mutex so a slow Connect doesn't hold the interface lock.
     pub status: Mutex<Status>,
 }
 
 impl Bearer {
-    /// Take the context's current properties and announce what changed.
-    pub async fn refresh(&self, em: &SignalEmitter<'_>, ctx: &Props) -> zbus::Result<()> {
-        let new = bearer::status(ctx);
+    /// Re-derive the status from the shared context cache and announce what changed.
+    pub async fn refresh(&self, em: &SignalEmitter<'_>) -> zbus::Result<()> {
+        let new = self.contexts.lock().unwrap().get(&self.context).map(bearer::status).unwrap_or_default();
         let old = std::mem::replace(&mut *self.status.lock().unwrap(), new.clone());
         if old.connected != new.connected {
             self.connected_changed(em).await?;
@@ -52,6 +53,13 @@ impl Bearer {
             self.ip6_config_changed(em).await?;
         }
         Ok(())
+    }
+
+    /// Store a fresh GetProperties of the context, then refresh.
+    async fn reload(&self, conn: &Connection, em: &SignalEmitter<'_>) -> Result<()> {
+        let props = self.context_props(conn).await?;
+        self.contexts.lock().unwrap().insert(self.context.clone(), props);
+        Ok(self.refresh(em).await?)
     }
 
     pub fn is_connected(&self) -> bool {
@@ -91,7 +99,7 @@ impl Bearer {
     pub async fn connect_inner(&self, conn: &Connection, em: &SignalEmitter<'_>) -> Result<()> {
         let ctx = self.context_props(conn).await?;
         if ofono::bool(&ctx, "Active") == Some(true) {
-            return Ok(self.refresh(em, &ctx).await?);
+            return self.reload(conn, em).await;
         }
 
         let netreg = ofono::get_properties(conn, &self.ofono_path, NETREG).await?;
@@ -112,27 +120,27 @@ impl Bearer {
         // oFono replies once the context is up (or failed to come up).
         ofono::set_property(conn, &self.context, CONTEXT, "Active", true.into()).await?;
         // Clients read Interface/Ip*Config right after Connect returns.
-        Ok(self.refresh(em, &self.context_props(conn).await?).await?)
+        self.reload(conn, em).await
     }
 
     pub async fn disconnect_inner(&self, conn: &Connection, em: &SignalEmitter<'_>) -> Result<()> {
         if self.is_connected() {
             ofono::set_property(conn, &self.context, CONTEXT, "Active", false.into()).await?;
         }
-        Ok(self.refresh(em, &self.context_props(conn).await.unwrap_or_default()).await?)
+        self.reload(conn, em).await
     }
 }
 
 /// Export a bearer for `req` on the oFono modem `ofono_path`, on a fitting
 /// context (added if none fits). The caller lists it on the modem.
-pub async fn new_bearer(conn: &Connection, server: &ObjectServer, ofono_path: &str, req: Request) -> Result<OwnedObjectPath> {
-    let contexts: Vec<(OwnedObjectPath, Props)> = conn
+pub async fn new_bearer(conn: &Connection, server: &ObjectServer, ofono_path: &str, contexts: &Contexts, req: Request) -> Result<OwnedObjectPath> {
+    let listed: Vec<(OwnedObjectPath, Props)> = conn
         .call_method(Some(SERVICE), ofono_path, Some(CONNMAN), "GetContexts", &())
         .await?
         .body()
         .deserialize()?;
-    let contexts: Vec<(String, Props)> = contexts.into_iter().map(|(p, props)| (p.to_string(), props)).collect();
-    let context = match bearer::choose_context(&req, &contexts) {
+    let listed: Vec<(String, Props)> = listed.into_iter().map(|(p, props)| (p.to_string(), props)).collect();
+    let context = match bearer::choose_context(&req, &listed) {
         Some(c) => c.to_owned(),
         None => conn
             .call_method(Some(SERVICE), ofono_path, Some(CONNMAN), "AddContext", &(req.context_type(),))
@@ -144,11 +152,19 @@ pub async fn new_bearer(conn: &Connection, server: &ObjectServer, ofono_path: &s
 
     let path = OwnedObjectPath::try_from(format!("{}/Bearer/{}", crate::MM_PATH, NEXT_BEARER.fetch_add(1, Ordering::Relaxed)))?;
     server
-        .at(&path, Bearer { ofono_path: ofono_path.to_owned(), context: context.clone(), request: req, status: Default::default() })
+        .at(
+            &path,
+            Bearer {
+                ofono_path: ofono_path.to_owned(),
+                context,
+                request: req,
+                contexts: contexts.clone(),
+                status: Default::default(),
+            },
+        )
         .await?;
     let iface = server.interface::<_, Bearer>(&path).await?;
-    let ctx = ofono::get_properties(conn, &context, CONTEXT).await.unwrap_or_default();
-    iface.get().await.refresh(iface.signal_emitter(), &ctx).await?;
+    iface.get().await.reload(conn, iface.signal_emitter()).await?;
     Ok(path)
 }
 
@@ -233,6 +249,7 @@ impl Bearer {
 #[derive(Debug, Default)]
 pub struct Simple {
     pub ofono_path: String,
+    pub contexts: Contexts,
 }
 
 #[interface(name = "org.freedesktop.ModemManager1.Modem.Simple")]
@@ -261,7 +278,7 @@ impl Simple {
         let path = match found {
             Some(p) => p,
             None => {
-                let p = new_bearer(conn, server, &self.ofono_path, req).await?;
+                let p = new_bearer(conn, server, &self.ofono_path, &self.contexts, req).await?;
                 let mut m = modem.get_mut().await;
                 m.bearers.push(p.clone());
                 m.bearers_changed(modem.signal_emitter()).await?;

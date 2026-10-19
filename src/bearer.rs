@@ -10,6 +10,12 @@ use crate::ofono::{self, Props};
 
 pub const CONTEXT: &str = "org.ofono.ConnectionContext";
 
+/// oFono's contexts of one modem, by path. Shared by the modem task (which
+/// applies signals key by key) and bearers (which store a fresh
+/// GetProperties after Connect), so neither can roll the other back with
+/// older data; bearer status is always derived from here.
+pub type Contexts = std::sync::Arc<std::sync::Mutex<HashMap<String, Props>>>;
+
 type Dict = HashMap<String, OwnedVariant>;
 
 fn v<'a>(x: impl Into<Variant<'a>>) -> OwnedVariant {

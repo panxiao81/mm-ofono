@@ -9,7 +9,7 @@ use zbus::{
 };
 
 use crate::derive::{self, Identity, ModemStatus, RADIO};
-use crate::bearer::Request;
+use crate::bearer::{Contexts, Request};
 use crate::error::{CoreError, Result};
 use crate::mm_bearer::{self, Bearer};
 use crate::mm::{MMBearerIpFamily as ip, MMModemPowerState as power};
@@ -22,6 +22,7 @@ pub struct Modem {
     pub status: ModemStatus,
     pub identity: Identity,
     pub bearers: Vec<OwnedObjectPath>,
+    pub contexts: Contexts,
 }
 
 impl Modem {
@@ -56,7 +57,7 @@ impl Modem {
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         properties: HashMap<String, OwnedVariant>,
     ) -> Result<OwnedObjectPath> {
-        let path = mm_bearer::new_bearer(conn, server, &self.ofono_path, Request::from_dict(&properties)).await?;
+        let path = mm_bearer::new_bearer(conn, server, &self.ofono_path, &self.contexts, Request::from_dict(&properties)).await?;
         self.bearers.push(path.clone());
         self.bearers_changed(&em).await?;
         Ok(path)

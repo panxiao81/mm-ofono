@@ -2,10 +2,7 @@
 //! oFono signals and GetProperties replies strictly one at a time, and after
 //! each one brings the ModemManager objects in line with that state.
 
-use std::{
-    collections::HashMap,
-    sync::atomic::{AtomicU32, Ordering},
-};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -14,7 +11,7 @@ use zbus::{Connection, OwnedObjectPath};
 
 use crate::derive::{self, CONNMAN, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE};
 use crate::device::{self, PhysicalDevice};
-use crate::bearer::CONTEXT;
+use crate::bearer::{CONTEXT, Contexts};
 use crate::mm::{MMModemState as state, MMModemStateChangeReason as reason};
 use crate::mm_bearer::{Bearer, Simple};
 use crate::mm_3gpp::Modem3gpp;
@@ -27,16 +24,6 @@ use crate::{MM_PATH, objects};
 
 /// oFono interfaces whose properties feed the ModemManager objects.
 const TRACKED: [&str; 5] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN];
-
-trait ClonedProps {
-    fn cloned_props(self) -> Props;
-}
-
-impl ClonedProps for Option<&Props> {
-    fn cloned_props(self) -> Props {
-        self.map(|p| p.iter().map(|(k, v)| (k.clone(), v.try_clone().unwrap())).collect()).unwrap_or_default()
-    }
-}
 
 // ModemManager never reuses object indexes.
 static NEXT_MODEM: AtomicU32 = AtomicU32::new(0);
@@ -61,7 +48,7 @@ pub fn spawn(conn: Connection, path: String, props: Props) -> mpsc::UnboundedSen
         sim: None,
         device: None,
         pending_sms: vec![],
-        contexts: HashMap::new(),
+        contexts: Contexts::default(),
     };
     tokio::spawn(task.run(props, rx));
     tx
@@ -78,8 +65,8 @@ struct Task {
     device: Option<PhysicalDevice>,
     /// Messages that arrived before the modem was exported.
     pending_sms: Vec<SmsData>,
-    /// oFono connection contexts by path, for the bearers using them.
-    contexts: HashMap<String, Props>,
+    /// oFono connection contexts by path, shared with the bearers.
+    contexts: Contexts,
 }
 
 impl Task {
@@ -101,7 +88,7 @@ impl Task {
                 Some(signal) = signals.next() => self.signal(signal).await,
                 Some(event) = rx.recv() => match event {
                     Event::Snapshot(iface, props) => self.snapshot(&iface, props),
-                    Event::Contexts(list) => self.contexts.extend(list),
+                    Event::Contexts(list) => self.contexts.lock().unwrap().extend(list),
                     Event::Removed => break,
                 },
                 else => break,
@@ -152,14 +139,14 @@ impl Task {
                 }
             }
             Signal::Property { path, iface, key, value } if iface == CONTEXT => {
-                if let Some(ctx) = self.contexts.get_mut(&path) {
+                if let Some(ctx) = self.contexts.lock().unwrap().get_mut(&path) {
                     ctx.insert(key, value);
                 }
             }
             Signal::Property { .. } => {}
             Signal::Sms { text, info, immediate } => self.received_sms(text, info, immediate).await,
-            Signal::ContextAdded { path, props } => drop(self.contexts.insert(path, props)),
-            Signal::ContextRemoved { path } => drop(self.contexts.remove(&path)),
+            Signal::ContextAdded { path, props } => drop(self.contexts.lock().unwrap().insert(path, props)),
+            Signal::ContextRemoved { path } => drop(self.contexts.lock().unwrap().remove(&path)),
         }
     }
 
@@ -183,7 +170,7 @@ impl Task {
             } else if !present {
                 self.ofono.ifaces.remove(iface);
                 if iface == CONNMAN {
-                    self.contexts.clear();
+                    self.contexts.lock().unwrap().clear();
                 }
             }
         }
@@ -244,10 +231,13 @@ impl Task {
                 let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{}", NEXT_MODEM.fetch_add(1, Ordering::Relaxed)))?;
                 info!("{}: exporting {path} (state {})", self.path, status.state);
                 let ofono_path = self.path.clone();
-                server.at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity, bearers: vec![] }).await?;
+                let contexts = self.contexts.clone();
+                server
+                    .at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity, bearers: vec![], contexts: contexts.clone() })
+                    .await?;
                 server.at(&path, Modem3gpp { ofono_path: ofono_path.clone(), status: status_3gpp }).await?;
                 server.at(&path, Messaging { ofono_path: ofono_path.clone(), messages: vec![] }).await?;
-                server.at(&path, Simple { ofono_path }).await?;
+                server.at(&path, Simple { ofono_path, contexts }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
                 for sms in std::mem::take(&mut self.pending_sms) {
                     mm_messaging::deliver(&self.conn, &path, sms).await?;
@@ -267,8 +257,7 @@ impl Task {
                 objects::update(&self.conn, &iface_3gpp, |m| m.status = status_3gpp).await?;
                 for bearer in iface.get().await.bearers.clone() {
                     let b = server.interface::<_, Bearer>(&bearer).await?;
-                    let ctx = self.contexts.get(&b.get().await.context).cloned_props();
-                    b.get().await.refresh(b.signal_emitter(), &ctx).await?;
+                    b.get().await.refresh(b.signal_emitter()).await?;
                 }
                 if old != new {
                     info!("{}: state {old} -> {new}", self.path);
@@ -294,7 +283,7 @@ impl Task {
         for bearer in modem.get().await.bearers.clone() {
             let Ok(b) = server.interface::<_, Bearer>(&bearer).await else { continue };
             let context = b.get().await.context.clone();
-            if self.contexts.get(&context).and_then(|c| ofono::bool(c, "Active")) == Some(true) {
+            if self.contexts.lock().unwrap().get(&context).and_then(|c| ofono::bool(c, "Active")) == Some(true) {
                 return true;
             }
         }

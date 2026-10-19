@@ -117,6 +117,15 @@ async fn ct_sim_ofono_restart() {
     assert_eq!(prop::<u32>(ril0, "UnlockRequired"), mm::MMModemLock::MM_MODEM_LOCK_NONE);
     assert_eq!(prop::<String>(ril0, "Revision"), "sdx55.rmtefs-484436-87");
 
+    let gpp = &objects.iter().find(|(_, i)| prop::<String>(&i[MODEM], "PrimaryPort") == "ril_0").unwrap().1
+        ["org.freedesktop.ModemManager1.Modem.Modem3gpp"];
+    assert_eq!(
+        prop::<u32>(gpp, "RegistrationState"),
+        mm::MMModem3gppRegistrationState::MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING
+    );
+    assert_eq!(prop::<String>(gpp, "OperatorCode"), "44051");
+    assert_eq!(prop::<String>(gpp, "OperatorName"), "中国电信 (KDDI)");
+
     let sim = get_all(&client, &path(ril0, "Sim"), "org.freedesktop.ModemManager1.Sim").await.unwrap();
     assert_eq!(prop::<String>(&sim, "OperatorIdentifier"), "46011");
     assert_eq!(prop::<String>(&sim, "OperatorName"), "中国电信");

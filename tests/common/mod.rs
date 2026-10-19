@@ -102,6 +102,7 @@ bag!(SimManager, "org.ofono.SimManager");
 bag!(NetworkRegistration, "org.ofono.NetworkRegistration");
 bag!(RadioSettings, "org.ofono.RadioSettings");
 bag!(VoiceCallManager, "org.ofono.VoiceCallManager");
+bag!(ConnectionManager, "org.ofono.ConnectionManager");
 
 #[derive(Default)]
 pub struct Manager {
@@ -199,7 +200,7 @@ impl FakeOfono {
                 }
             };
         }
-        dispatch!(OfonoModem, SimManager, NetworkRegistration, RadioSettings, VoiceCallManager);
+        dispatch!(OfonoModem, SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager);
     }
 
     /// Plays `events` in order. An interface that appears gets the props of
@@ -254,7 +255,7 @@ impl FakeOfono {
             let server = self.conn.object_server();
             let n = iface;
             macro_rules! has { ($($ty:ident),*) => { false $(|| (n == <$ty as Interface>::name().as_str() && server.interface::<_, $ty>(path).await.is_ok()))* } }
-            has!(SimManager, NetworkRegistration, RadioSettings, VoiceCallManager)
+            has!(SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager)
         };
         if !exists {
             self.update(path, iface, initial, false).await;

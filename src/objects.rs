@@ -17,7 +17,7 @@ use zbus::{
     {ObjectPath, OwnedObjectPath, OwnedVariant, Variant},
 };
 
-use crate::{MM_PATH, mm_modem::Modem};
+use crate::{MM_PATH, mm_3gpp::Modem3gpp, mm_modem::Modem};
 
 pub type IfaceProps = HashMap<String, HashMap<String, OwnedVariant>>;
 
@@ -32,12 +32,24 @@ async fn props_of<I: Interface>(server: &ObjectServer, conn: &Connection, path: 
     Ok(Some(props))
 }
 
+/// Calls `$f::<I>()` for every ModemManager interface a modem object can have.
+macro_rules! for_modem_interfaces {
+    ($f:ident ( $($arg:expr),* )) => {{
+        $f::<Modem>($($arg),*).await?;
+        $f::<Modem3gpp>($($arg),*).await?;
+    }};
+}
+
 /// Every ModemManager interface exported on a modem object, with properties.
 async fn modem_interfaces(server: &ObjectServer, conn: &Connection, path: &ObjectPath<'_>) -> fdo::Result<IfaceProps> {
     let mut out = IfaceProps::new();
-    if let Some(p) = props_of::<Modem>(server, conn, path).await? {
-        out.insert(Modem::name().to_string(), p);
+    async fn add<I: Interface>(out: &mut IfaceProps, server: &ObjectServer, conn: &Connection, path: &ObjectPath<'_>) -> fdo::Result<()> {
+        if let Some(p) = props_of::<I>(server, conn, path).await? {
+            out.insert(I::name().to_string(), p);
+        }
+        Ok(())
     }
+    for_modem_interfaces!(add(&mut out, server, conn, path));
     Ok(out)
 }
 
@@ -62,21 +74,32 @@ impl ModemObjects {
     async fn interfaces_removed(emitter: &SignalEmitter<'_>, object_path: ObjectPath<'_>, interfaces: &[&str]) -> zbus::Result<()>;
 }
 
-pub async fn add_modem(conn: &Connection, path: &OwnedObjectPath, modem: Modem) -> zbus::Result<()> {
+/// List a modem object, whose interfaces the caller has already exported,
+/// and announce it.
+pub async fn announce_modem(conn: &Connection, path: &OwnedObjectPath) -> zbus::Result<()> {
     let server = conn.object_server();
-    server.at(path, modem).await?;
     let om = server.interface::<_, ModemObjects>(MM_PATH).await?;
     om.get_mut().await.modems.insert(path.clone());
     let ifaces = modem_interfaces(&server, conn, path).await?;
     ModemObjects::interfaces_added(om.signal_emitter(), path.as_ref(), &ifaces).await
 }
 
+/// Unexport every interface of a modem object and announce its removal.
 pub async fn remove_modem(conn: &Connection, path: &OwnedObjectPath) -> zbus::Result<()> {
     let server = conn.object_server();
     let om = server.interface::<_, ModemObjects>(MM_PATH).await?;
     om.get_mut().await.modems.remove(path);
-    server.remove::<Modem, _>(path).await?;
-    ModemObjects::interfaces_removed(om.signal_emitter(), path.as_ref(), &[Modem::name().as_str()]).await
+
+    let mut removed = vec![];
+    async fn remove<I: Interface>(removed: &mut Vec<String>, server: &ObjectServer, path: &OwnedObjectPath) -> zbus::Result<()> {
+        if server.remove::<I, _>(path).await.is_ok() {
+            removed.push(I::name().to_string());
+        }
+        Ok(())
+    }
+    for_modem_interfaces!(remove(&mut removed, &server, path));
+    let removed: Vec<&str> = removed.iter().map(String::as_str).collect();
+    ModemObjects::interfaces_removed(om.signal_emitter(), path.as_ref(), &removed).await
 }
 
 /// Run `f` on an exported interface, then announce whichever properties

@@ -6,19 +6,20 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use zbus::{Connection, OwnedObjectPath};
 
-use crate::derive::{self, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE};
+use crate::derive::{self, CONNMAN, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE};
 use crate::device::{self, PhysicalDevice};
 use crate::mm::MMModemStateChangeReason as reason;
+use crate::mm_3gpp::Modem3gpp;
 use crate::mm_modem::Modem;
 use crate::mm_sim::Sim;
 use crate::ofono::{self, Change, MODEM, Props};
 use crate::{MM_PATH, objects};
 
 /// oFono interfaces whose properties feed the ModemManager objects.
-const TRACKED: [&str; 4] = [SIM_MANAGER, NETREG, RADIO, VOICE];
+const TRACKED: [&str; 5] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN];
 
 // ModemManager never reuses object indexes.
 static NEXT_MODEM: AtomicU32 = AtomicU32::new(0);
@@ -90,11 +91,14 @@ impl Task {
     fn fetch(&self, iface: &str) {
         let (conn, path, iface, events) = (self.conn.clone(), self.path.clone(), iface.to_owned(), self.events.clone());
         tokio::spawn(async move {
-            match ofono::get_properties(&conn, &path, &iface).await {
-                Ok(props) => drop(events.send(Event::Snapshot(iface, props))),
-                // The interface can disappear before the reply; its removal is a change too.
-                Err(e) => debug!("{path}: GetProperties {iface}: {e}"),
-            }
+            let props = ofono::get_properties(&conn, &path, &iface).await.unwrap_or_else(|e| {
+                // Most likely the interface went away before the reply (its removal
+                // comes as a change too). Either way, carry on with what we know
+                // rather than holding the modem back forever.
+                warn!("{path}: GetProperties {iface}: {e}");
+                Props::new()
+            });
+            let _ = events.send(Event::Snapshot(iface, props));
         });
     }
 
@@ -159,13 +163,16 @@ impl Task {
 
         let status = derive::status(&self.ofono);
         let identity = derive::identity(&self.ofono, &self.path, self.device.as_ref());
+        let status_3gpp = derive::status_3gpp(&self.ofono);
         let sim_path = sim.as_ref().and(self.sim.clone());
         match &self.modem {
             None => {
                 let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{}", NEXT_MODEM.fetch_add(1, Ordering::Relaxed)))?;
                 info!("{}: exporting {path} (state {})", self.path, status.state);
-                let modem = Modem { ofono_path: self.path.clone(), sim: sim_path, status, identity };
-                objects::add_modem(&self.conn, &path, modem).await?;
+                let ofono_path = self.path.clone();
+                server.at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity }).await?;
+                server.at(&path, Modem3gpp { ofono_path, status: status_3gpp }).await?;
+                objects::announce_modem(&self.conn, &path).await?;
                 self.modem = Some(path);
             }
             Some(path) => {
@@ -177,6 +184,8 @@ impl Task {
                     m.identity = identity;
                 })
                 .await?;
+                let iface_3gpp = server.interface::<_, Modem3gpp>(path).await?;
+                objects::update(&self.conn, &iface_3gpp, |m| m.status = status_3gpp).await?;
                 if old != new {
                     info!("{}: state {old} -> {new}", self.path);
                     Modem::emit_state_changed(iface.signal_emitter(), old, new, reason::MM_MODEM_STATE_CHANGE_REASON_UNKNOWN).await?;

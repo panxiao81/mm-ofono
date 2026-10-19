@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use zbus::Variant;
+use zbus::{OwnedVariant, Variant};
 
 use crate::mm::{
     MMModemAccessTechnology as tech, MMModemCapability as cap, MMModemLock as lock,
@@ -11,12 +11,13 @@ use crate::mm::{
     MMModemStateFailedReason as failed,
 };
 use crate::device::PhysicalDevice;
-use crate::ofono::{Iface, MODEM};
+use crate::ofono::{self, Iface, MODEM, Props};
 
 pub const SIM_MANAGER: &str = "org.ofono.SimManager";
 pub const NETREG: &str = "org.ofono.NetworkRegistration";
 pub const RADIO: &str = "org.ofono.RadioSettings";
 pub const VOICE: &str = "org.ofono.VoiceCallManager";
+pub const CONNMAN: &str = "org.ofono.ConnectionManager";
 
 /// Cached properties of every interface of one oFono modem; an interface
 /// is present iff oFono lists it in `org.ofono.Modem.Interfaces`.
@@ -26,35 +27,24 @@ pub struct OfonoModem {
 }
 
 impl OfonoModem {
+    pub fn props(&self, iface: &str) -> Option<&Props> {
+        self.ifaces.get(iface).map(|i| &i.props)
+    }
+
     fn get(&self, iface: &str, key: &str) -> Option<&Variant<'static>> {
-        self.ifaces.get(iface)?.props.get(key).map(|v| &**v)
+        ofono::get(self.props(iface)?, key)
     }
 
     fn str(&self, iface: &str, key: &str) -> Option<&str> {
-        match self.get(iface, key)? {
-            Variant::Str(s) => Some(s.as_str()),
-            _ => None,
-        }
+        ofono::str(self.props(iface)?, key)
     }
 
     fn bool(&self, iface: &str, key: &str) -> Option<bool> {
-        match self.get(iface, key)? {
-            Variant::Bool(b) => Some(*b),
-            _ => None,
-        }
+        ofono::bool(self.props(iface)?, key)
     }
 
     pub fn strings(&self, iface: &str, key: &str) -> Vec<String> {
-        match self.get(iface, key) {
-            Some(Variant::Array(a)) => a
-                .iter()
-                .filter_map(|v| match v {
-                    Variant::Str(s) => Some(s.to_string()),
-                    _ => None,
-                })
-                .collect(),
-            _ => vec![],
-        }
+        self.props(iface).map(|p| ofono::strings(p, key)).unwrap_or_default()
     }
 
     pub fn has(&self, iface: &str) -> bool {
@@ -316,6 +306,102 @@ pub fn identity(m: &OfonoModem, path: &str, dev: Option<&PhysicalDevice>) -> Ide
     }
 }
 
+/// `org.freedesktop.ModemManager1.Modem.Modem3gpp` properties.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Status3gpp {
+    pub imei: String,
+    pub registration_state: u32,
+    pub operator_code: String,
+    pub operator_name: String,
+    pub enabled_facility_locks: u32,
+    pub packet_service_state: u32,
+}
+
+pub fn status_3gpp(m: &OfonoModem) -> Status3gpp {
+    use crate::mm::{
+        MMModem3gppFacility as fac, MMModem3gppPacketServiceState as ps, MMModem3gppRegistrationState as reg,
+    };
+
+    let registration_state = match m.str(NETREG, "Status") {
+        Some("unregistered") => reg::MM_MODEM_3GPP_REGISTRATION_STATE_IDLE,
+        Some("registered") => reg::MM_MODEM_3GPP_REGISTRATION_STATE_HOME,
+        Some("searching") => reg::MM_MODEM_3GPP_REGISTRATION_STATE_SEARCHING,
+        Some("denied") => reg::MM_MODEM_3GPP_REGISTRATION_STATE_DENIED,
+        Some("roaming") => reg::MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING,
+        _ => reg::MM_MODEM_3GPP_REGISTRATION_STATE_UNKNOWN,
+    };
+    let registered = matches!(m.str(NETREG, "Status"), Some("registered" | "roaming"));
+
+    let mut locks = m
+        .strings(SIM_MANAGER, "LockedPins")
+        .iter()
+        .filter_map(|pin| match pin.as_str() {
+            "pin" => Some(fac::MM_MODEM_3GPP_FACILITY_SIM),
+            "phone" => Some(fac::MM_MODEM_3GPP_FACILITY_PH_SIM),
+            "firstphone" => Some(fac::MM_MODEM_3GPP_FACILITY_PH_FSIM),
+            "network" => Some(fac::MM_MODEM_3GPP_FACILITY_NET_PERS),
+            "netsub" => Some(fac::MM_MODEM_3GPP_FACILITY_NET_SUB_PERS),
+            "service" => Some(fac::MM_MODEM_3GPP_FACILITY_PROVIDER_PERS),
+            "corp" => Some(fac::MM_MODEM_3GPP_FACILITY_CORP_PERS),
+            _ => None,
+        })
+        .fold(fac::MM_MODEM_3GPP_FACILITY_NONE, |a, b| a | b);
+    if m.bool(SIM_MANAGER, "FixedDialing") == Some(true) {
+        locks |= fac::MM_MODEM_3GPP_FACILITY_FIXED_DIALING;
+    }
+
+    Status3gpp {
+        imei: m.str(MODEM, "Serial").unwrap_or_default().to_owned(),
+        registration_state,
+        operator_code: if registered { operator_code(m.props(NETREG)) } else { String::new() },
+        operator_name: if registered { m.str(NETREG, "Name").unwrap_or_default().to_owned() } else { String::new() },
+        enabled_facility_locks: locks,
+        packet_service_state: match m.bool(CONNMAN, "Attached") {
+            Some(true) => ps::MM_MODEM_3GPP_PACKET_SERVICE_STATE_ATTACHED,
+            Some(false) => ps::MM_MODEM_3GPP_PACKET_SERVICE_STATE_DETACHED,
+            None => ps::MM_MODEM_3GPP_PACKET_SERVICE_STATE_UNKNOWN,
+        },
+    }
+}
+
+/// "MCCMNC" from an oFono NetworkRegistration or NetworkOperator.
+pub fn operator_code(props: Option<&Props>) -> String {
+    let Some(p) = props else { return String::new() };
+    format!(
+        "{}{}",
+        ofono::str(p, "MobileCountryCode").unwrap_or_default(),
+        ofono::str(p, "MobileNetworkCode").unwrap_or_default()
+    )
+}
+
+/// One entry of Modem3gpp.Scan from an oFono NetworkOperator.
+pub fn scan_result(op: &Props) -> HashMap<String, OwnedVariant> {
+    use crate::mm::MMModem3gppNetworkAvailability as avail;
+
+    let status = match ofono::str(op, "Status") {
+        Some("available") => avail::MM_MODEM_3GPP_NETWORK_AVAILABILITY_AVAILABLE,
+        Some("current") => avail::MM_MODEM_3GPP_NETWORK_AVAILABILITY_CURRENT,
+        Some("forbidden") => avail::MM_MODEM_3GPP_NETWORK_AVAILABILITY_FORBIDDEN,
+        _ => avail::MM_MODEM_3GPP_NETWORK_AVAILABILITY_UNKNOWN,
+    };
+    // The best technology the operator offers.
+    let tech = ofono::strings(op, "Technologies")
+        .iter()
+        .map(|t| access_technology(t))
+        .max()
+        .unwrap_or(tech::MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN);
+    let name = ofono::str(op, "Name").unwrap_or_default();
+
+    let v = |x: Variant<'_>| OwnedVariant::try_from(x).unwrap();
+    HashMap::from([
+        ("status".into(), v(status.into())),
+        ("operator-long".into(), v(name.into())),
+        ("operator-short".into(), v(name.into())),
+        ("operator-code".into(), v(operator_code(Some(op)).as_str().into())),
+        ("access-technology".into(), v(tech.into())),
+    ])
+}
+
 /// ModemManager SIM properties; `None` while no card is inserted.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SimStatus {
@@ -483,6 +569,49 @@ mod tests {
         let m = modem(&[(MODEM, "Manufacturer", "Acme".into())]);
         assert_eq!(identity(&m, "/ril_0", Some(&dev)).manufacturer, "Acme");
         assert_eq!(identity(&m, "/ril_0", None).model, "");
+    }
+
+    #[test]
+    fn three_gpp_roaming_with_pin_lock() {
+        use crate::mm::{MMModem3gppFacility as fac, MMModem3gppRegistrationState as reg};
+        let s = status_3gpp(&modem(&[
+            (MODEM, "Serial", "350000000000017".into()),
+            (NETREG, "Status", "roaming".into()),
+            (NETREG, "Name", "中国电信 (KDDI)".into()),
+            (NETREG, "MobileCountryCode", "440".into()),
+            (NETREG, "MobileNetworkCode", "51".into()),
+            (SIM_MANAGER, "LockedPins", strs(&["pin"])),
+            (SIM_MANAGER, "FixedDialing", true.into()),
+            (CONNMAN, "Attached", true.into()),
+        ]));
+        assert_eq!(s.registration_state, reg::MM_MODEM_3GPP_REGISTRATION_STATE_ROAMING);
+        assert_eq!(s.operator_code, "44051");
+        assert_eq!(s.operator_name, "中国电信 (KDDI)");
+        assert_eq!(s.enabled_facility_locks, fac::MM_MODEM_3GPP_FACILITY_SIM | fac::MM_MODEM_3GPP_FACILITY_FIXED_DIALING);
+        assert_eq!(s.packet_service_state, crate::mm::MMModem3gppPacketServiceState::MM_MODEM_3GPP_PACKET_SERVICE_STATE_ATTACHED);
+
+        // Not registered: no operator, like ModemManager.
+        let s = status_3gpp(&modem(&[(NETREG, "Status", "searching".into()), (NETREG, "Name", "x".into())]));
+        assert_eq!((s.operator_code.as_str(), s.operator_name.as_str()), ("", ""));
+    }
+
+    #[test]
+    fn scan_result_from_ofono_operator() {
+        use crate::mm::MMModem3gppNetworkAvailability as avail;
+        let mut op = Props::new();
+        for (k, v) in [
+            ("Name", Variant::from("NTT DOCOMO")),
+            ("Status", "forbidden".into()),
+            ("MobileCountryCode", "440".into()),
+            ("MobileNetworkCode", "10".into()),
+            ("Technologies", strs(&["umts", "lte"])),
+        ] {
+            op.insert(k.into(), v.try_into().unwrap());
+        }
+        let r = scan_result(&op);
+        assert_eq!(u32::try_from(r["status"].try_clone().unwrap()).unwrap(), avail::MM_MODEM_3GPP_NETWORK_AVAILABILITY_FORBIDDEN);
+        assert_eq!(String::try_from(r["operator-code"].try_clone().unwrap()).unwrap(), "44010");
+        assert_eq!(u32::try_from(r["access-technology"].try_clone().unwrap()).unwrap(), tech::MM_MODEM_ACCESS_TECHNOLOGY_LTE);
     }
 
     #[test]

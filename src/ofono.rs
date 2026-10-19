@@ -42,6 +42,37 @@ pub async fn set_property(
     Ok(())
 }
 
+pub fn get<'a>(props: &'a Props, key: &str) -> Option<&'a Variant<'static>> {
+    props.get(key).map(|v| &**v)
+}
+
+pub fn str<'a>(props: &'a Props, key: &str) -> Option<&'a str> {
+    match get(props, key)? {
+        Variant::Str(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+pub fn bool(props: &Props, key: &str) -> Option<bool> {
+    match get(props, key)? {
+        Variant::Bool(b) => Some(*b),
+        _ => None,
+    }
+}
+
+pub fn strings(props: &Props, key: &str) -> Vec<String> {
+    match get(props, key) {
+        Some(Variant::Array(a)) => a
+            .iter()
+            .filter_map(|v| match v {
+                Variant::Str(s) => Some(s.to_string()),
+                _ => None,
+            })
+            .collect(),
+        _ => vec![],
+    }
+}
+
 /// A change on one oFono interface of a modem.
 #[derive(Debug)]
 pub struct Change {

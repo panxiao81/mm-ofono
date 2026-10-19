@@ -80,6 +80,8 @@ pub enum Signal {
     Property { path: String, iface: String, key: String, value: OwnedVariant },
     /// `MessageManager.IncomingMessage`, or `ImmediateMessage` (class 0) when `immediate`.
     Sms { text: String, info: Props, immediate: bool },
+    ContextAdded { path: String, props: Props },
+    ContextRemoved { path: String },
 }
 
 /// Every oFono signal on the modem's path and below, in emission order
@@ -105,6 +107,14 @@ pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<
             m @ ("IncomingMessage" | "ImmediateMessage") => {
                 let (text, info): (String, Props) = msg.body().deserialize().ok()?;
                 Some(Signal::Sms { text, info, immediate: m == "ImmediateMessage" })
+            }
+            "ContextAdded" => {
+                let (path, props): (OwnedObjectPath, Props) = msg.body().deserialize().ok()?;
+                Some(Signal::ContextAdded { path: path.to_string(), props })
+            }
+            "ContextRemoved" => {
+                let path: OwnedObjectPath = msg.body().deserialize().ok()?;
+                Some(Signal::ContextRemoved { path: path.to_string() })
             }
             _ => None,
         }

@@ -1,9 +1,11 @@
+pub mod bearer;
 pub mod derive;
 pub mod device;
 pub mod error;
 pub mod manager;
 pub mod mm;
 pub mod mm_3gpp;
+pub mod mm_bearer;
 pub mod mm_messaging;
 pub mod mm_modem;
 pub mod mm_sim;

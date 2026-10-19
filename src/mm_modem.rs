@@ -3,13 +3,15 @@
 use std::collections::HashMap;
 
 use zbus::{
-    Connection, interface,
+    Connection, ObjectServer, interface,
     object_server::SignalEmitter,
     {OwnedObjectPath, OwnedVariant, Variant},
 };
 
 use crate::derive::{self, Identity, ModemStatus, RADIO};
+use crate::bearer::Request;
 use crate::error::{CoreError, Result};
+use crate::mm_bearer::{self, Bearer};
 use crate::mm::{MMBearerIpFamily as ip, MMModemPowerState as power};
 use crate::ofono::{self, MODEM};
 
@@ -19,6 +21,7 @@ pub struct Modem {
     pub sim: Option<OwnedObjectPath>,
     pub status: ModemStatus,
     pub identity: Identity,
+    pub bearers: Vec<OwnedObjectPath>,
 }
 
 impl Modem {
@@ -43,15 +46,38 @@ impl Modem {
     }
 
     async fn list_bearers(&self) -> Vec<OwnedObjectPath> {
-        vec![]
+        self.bearers.clone()
     }
 
-    async fn create_bearer(&self, _properties: HashMap<String, OwnedVariant>) -> Result<OwnedObjectPath> {
-        Err(CoreError::Unsupported("bearers are not implemented yet".into()))
+    async fn create_bearer(
+        &mut self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+        properties: HashMap<String, OwnedVariant>,
+    ) -> Result<OwnedObjectPath> {
+        let path = mm_bearer::new_bearer(conn, server, &self.ofono_path, Request::from_dict(&properties)).await?;
+        self.bearers.push(path.clone());
+        self.bearers_changed(&em).await?;
+        Ok(path)
     }
 
-    async fn delete_bearer(&self, _bearer: OwnedObjectPath) -> Result<()> {
-        Err(CoreError::Unsupported("bearers are not implemented yet".into()))
+    async fn delete_bearer(
+        &mut self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+        bearer: OwnedObjectPath,
+    ) -> Result<()> {
+        let Some(i) = self.bearers.iter().position(|b| *b == bearer) else {
+            return Err(CoreError::Failed(format!("no bearer {bearer}")));
+        };
+        let b = server.interface::<_, Bearer>(&bearer).await?;
+        b.get().await.disconnect_inner(conn, b.signal_emitter()).await?;
+        server.remove::<Bearer, _>(&bearer).await?;
+        self.bearers.remove(i);
+        self.bearers_changed(&em).await?;
+        Ok(())
     }
 
     async fn reset(&self) -> Result<()> {
@@ -121,7 +147,7 @@ impl Modem {
 
     #[zbus(property)]
     async fn bearers(&self) -> Vec<OwnedObjectPath> {
-        vec![]
+        self.bearers.clone()
     }
 
     #[zbus(property)]

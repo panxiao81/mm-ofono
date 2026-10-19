@@ -2,7 +2,10 @@
 //! oFono signals and GetProperties replies strictly one at a time, and after
 //! each one brings the ModemManager objects in line with that state.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU32, Ordering},
+};
 
 use futures_util::StreamExt;
 use tokio::sync::mpsc;
@@ -11,7 +14,9 @@ use zbus::{Connection, OwnedObjectPath};
 
 use crate::derive::{self, CONNMAN, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE};
 use crate::device::{self, PhysicalDevice};
-use crate::mm::MMModemStateChangeReason as reason;
+use crate::bearer::CONTEXT;
+use crate::mm::{MMModemState as state, MMModemStateChangeReason as reason};
+use crate::mm_bearer::{Bearer, Simple};
 use crate::mm_3gpp::Modem3gpp;
 use crate::mm_messaging::{self, Messaging};
 use crate::mm_modem::Modem;
@@ -23,12 +28,23 @@ use crate::{MM_PATH, objects};
 /// oFono interfaces whose properties feed the ModemManager objects.
 const TRACKED: [&str; 5] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN];
 
+trait ClonedProps {
+    fn cloned_props(self) -> Props;
+}
+
+impl ClonedProps for Option<&Props> {
+    fn cloned_props(self) -> Props {
+        self.map(|p| p.iter().map(|(k, v)| (k.clone(), v.try_clone().unwrap())).collect()).unwrap_or_default()
+    }
+}
+
 // ModemManager never reuses object indexes.
 static NEXT_MODEM: AtomicU32 = AtomicU32::new(0);
 static NEXT_SIM: AtomicU32 = AtomicU32::new(0);
 
 pub enum Event {
     Snapshot(String, Props),
+    Contexts(Vec<(String, Props)>),
     Removed,
 }
 
@@ -45,6 +61,7 @@ pub fn spawn(conn: Connection, path: String, props: Props) -> mpsc::UnboundedSen
         sim: None,
         device: None,
         pending_sms: vec![],
+        contexts: HashMap::new(),
     };
     tokio::spawn(task.run(props, rx));
     tx
@@ -61,6 +78,8 @@ struct Task {
     device: Option<PhysicalDevice>,
     /// Messages that arrived before the modem was exported.
     pending_sms: Vec<SmsData>,
+    /// oFono connection contexts by path, for the bearers using them.
+    contexts: HashMap<String, Props>,
 }
 
 impl Task {
@@ -82,6 +101,7 @@ impl Task {
                 Some(signal) = signals.next() => self.signal(signal).await,
                 Some(event) = rx.recv() => match event {
                     Event::Snapshot(iface, props) => self.snapshot(&iface, props),
+                    Event::Contexts(list) => self.contexts.extend(list),
                     Event::Removed => break,
                 },
                 else => break,
@@ -107,6 +127,20 @@ impl Task {
         });
     }
 
+    fn fetch_contexts(&self) {
+        let (conn, path, events) = (self.conn.clone(), self.path.clone(), self.events.clone());
+        tokio::spawn(async move {
+            let reply = conn
+                .call_method(Some(ofono::SERVICE), path.as_str(), Some(CONNMAN), "GetContexts", &())
+                .await
+                .and_then(|r| r.body().deserialize::<Vec<(OwnedObjectPath, Props)>>());
+            match reply {
+                Ok(list) => drop(events.send(Event::Contexts(list.into_iter().map(|(p, c)| (p.to_string(), c)).collect()))),
+                Err(e) => warn!("{path}: GetContexts: {e}"),
+            }
+        });
+    }
+
     async fn signal(&mut self, signal: Signal) {
         match signal {
             Signal::Property { path, iface, key, value } if path == self.path => {
@@ -117,8 +151,15 @@ impl Task {
                     self.interfaces_changed();
                 }
             }
+            Signal::Property { path, iface, key, value } if iface == CONTEXT => {
+                if let Some(ctx) = self.contexts.get_mut(&path) {
+                    ctx.insert(key, value);
+                }
+            }
             Signal::Property { .. } => {}
             Signal::Sms { text, info, immediate } => self.received_sms(text, info, immediate).await,
+            Signal::ContextAdded { path, props } => drop(self.contexts.insert(path, props)),
+            Signal::ContextRemoved { path } => drop(self.contexts.remove(&path)),
         }
     }
 
@@ -136,8 +177,14 @@ impl Task {
             if present && !self.ofono.has(iface) {
                 self.ofono.ifaces.insert(iface.into(), Default::default());
                 self.fetch(iface);
+                if iface == CONNMAN {
+                    self.fetch_contexts();
+                }
             } else if !present {
                 self.ofono.ifaces.remove(iface);
+                if iface == CONNMAN {
+                    self.contexts.clear();
+                }
             }
         }
     }
@@ -185,7 +232,10 @@ impl Task {
             _ => {}
         }
 
-        let status = derive::status(&self.ofono);
+        let mut status = derive::status(&self.ofono);
+        if status.state == state::MM_MODEM_STATE_REGISTERED && self.bearer_connected().await {
+            status.state = state::MM_MODEM_STATE_CONNECTED;
+        }
         let identity = derive::identity(&self.ofono, &self.path, self.device.as_ref());
         let status_3gpp = derive::status_3gpp(&self.ofono);
         let sim_path = sim.as_ref().and(self.sim.clone());
@@ -194,9 +244,10 @@ impl Task {
                 let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{}", NEXT_MODEM.fetch_add(1, Ordering::Relaxed)))?;
                 info!("{}: exporting {path} (state {})", self.path, status.state);
                 let ofono_path = self.path.clone();
-                server.at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity }).await?;
+                server.at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity, bearers: vec![] }).await?;
                 server.at(&path, Modem3gpp { ofono_path: ofono_path.clone(), status: status_3gpp }).await?;
-                server.at(&path, Messaging { ofono_path, messages: vec![] }).await?;
+                server.at(&path, Messaging { ofono_path: ofono_path.clone(), messages: vec![] }).await?;
+                server.at(&path, Simple { ofono_path }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
                 for sms in std::mem::take(&mut self.pending_sms) {
                     mm_messaging::deliver(&self.conn, &path, sms).await?;
@@ -214,6 +265,11 @@ impl Task {
                 .await?;
                 let iface_3gpp = server.interface::<_, Modem3gpp>(path).await?;
                 objects::update(&self.conn, &iface_3gpp, |m| m.status = status_3gpp).await?;
+                for bearer in iface.get().await.bearers.clone() {
+                    let b = server.interface::<_, Bearer>(&bearer).await?;
+                    let ctx = self.contexts.get(&b.get().await.context).cloned_props();
+                    b.get().await.refresh(b.signal_emitter(), &ctx).await?;
+                }
                 if old != new {
                     info!("{}: state {old} -> {new}", self.path);
                     Modem::emit_state_changed(iface.signal_emitter(), old, new, reason::MM_MODEM_STATE_CHANGE_REASON_UNKNOWN).await?;
@@ -230,9 +286,30 @@ impl Task {
         Ok(())
     }
 
+    /// Whether a bearer of this modem has its context active.
+    async fn bearer_connected(&self) -> bool {
+        let Some(path) = &self.modem else { return false };
+        let server = self.conn.object_server();
+        let Ok(modem) = server.interface::<_, Modem>(path).await else { return false };
+        for bearer in modem.get().await.bearers.clone() {
+            let Ok(b) = server.interface::<_, Bearer>(&bearer).await else { continue };
+            let context = b.get().await.context.clone();
+            if self.contexts.get(&context).and_then(|c| ofono::bool(c, "Active")) == Some(true) {
+                return true;
+            }
+        }
+        false
+    }
+
     async fn unexport(&mut self) -> zbus::Result<()> {
         if let Some(path) = self.modem.take() {
             info!("{}: removing {path}", self.path);
+            let server = self.conn.object_server();
+            if let Ok(modem) = server.interface::<_, Modem>(&path).await {
+                for bearer in modem.get().await.bearers.clone() {
+                    server.remove::<Bearer, _>(&bearer).await?;
+                }
+            }
             objects::remove_modem(&self.conn, &path).await?;
         }
         if let Some(path) = self.sim.take() {

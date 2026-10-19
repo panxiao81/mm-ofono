@@ -6,7 +6,7 @@ use std::{collections::HashMap, time::Duration};
 
 use common::{Bus, FakeOfono, trace};
 use futures_util::StreamExt;
-use mm_ofono::{MM_PATH, MM_SERVICE, mm};
+use mm_ofono::{MM_PATH, MM_SERVICE, mm, ofono};
 use zbus::{Connection, MatchRule, MessageStream, OwnedObjectPath, OwnedVariant, Variant, message::Type};
 
 type Objects = HashMap<OwnedObjectPath, HashMap<String, HashMap<String, OwnedVariant>>>;
@@ -223,4 +223,55 @@ async fn sms_round_trip() {
     assert!(get_all(&client, sms.as_str(), SMS).await.is_err());
     let listed: Vec<OwnedObjectPath> = call(&client, &modem, MESSAGING, "List", &()).await.unwrap();
     assert!(!listed.contains(&sms));
+}
+
+const SIMPLE: &str = "org.freedesktop.ModemManager1.Modem.Simple";
+const BEARER: &str = "org.freedesktop.ModemManager1.Bearer";
+
+#[tokio::test]
+async fn data_round_trip() {
+    use mm::{MMBearerIpFamily as family, MMBearerIpMethod as method, MMModemState as state};
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+    let ctx = ofono.add_context("/ril_0", "internet", "ctnet").await;
+
+    let connect = || {
+        let (client, modem) = (client.clone(), modem_path.clone());
+        async move {
+            let props = HashMap::from([("apn", Variant::from("ctnet")), ("ip-type", Variant::from(family::MM_BEARER_IP_FAMILY_IPV4V6))]);
+            call::<OwnedObjectPath>(&client, &modem, SIMPLE, "Connect", &(props,)).await.unwrap()
+        }
+    };
+    let bearer = connect().await;
+
+    // Everything NetworkManager reads right after Connect returns.
+    let b = get_all(&client, bearer.as_str(), BEARER).await.unwrap();
+    assert!(prop::<bool>(&b, "Connected"));
+    assert_eq!(prop::<String>(&b, "Interface"), "rmnet_data2");
+    let ip4: HashMap<String, OwnedVariant> = prop(&b, "Ip4Config");
+    assert_eq!(prop::<u32>(&ip4, "method"), method::MM_BEARER_IP_METHOD_STATIC);
+    assert_eq!(prop::<String>(&ip4, "address"), "10.172.70.13");
+    assert_eq!(prop::<u32>(&ip4, "prefix"), 30);
+    assert_eq!(prop::<String>(&ip4, "dns1"), "1.1.1.1");
+    let ip6: HashMap<String, OwnedVariant> = prop(&b, "Ip6Config");
+    assert_eq!(prop::<u32>(&ip6, "prefix"), 64);
+    assert_eq!(ofono::str(&ofono.context(&ctx).await, "Protocol"), Some("dual"));
+
+    let objects = settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_CONNECTED)).await;
+    let (_, m) = modem(&objects, "ril_0").unwrap();
+    let bearers: Vec<OwnedObjectPath> = prop(m, "Bearers");
+    assert_eq!(bearers, [bearer.clone()]);
+
+    // Same APN: the same bearer.
+    assert_eq!(connect().await, bearer);
+
+    call::<()>(&client, &modem_path, SIMPLE, "Disconnect", &(OwnedObjectPath::try_from("/").unwrap(),)).await.unwrap();
+    let b = get_all(&client, bearer.as_str(), BEARER).await.unwrap();
+    assert!(!prop::<bool>(&b, "Connected"));
+    settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_REGISTERED)).await;
+
+    call::<()>(&client, &modem_path, MODEM, "DeleteBearer", &(bearer.clone(),)).await.unwrap();
+    assert!(get_all(&client, bearer.as_str(), BEARER).await.is_err());
 }

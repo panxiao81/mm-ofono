@@ -102,7 +102,6 @@ bag!(SimManager, "org.ofono.SimManager");
 bag!(NetworkRegistration, "org.ofono.NetworkRegistration");
 bag!(RadioSettings, "org.ofono.RadioSettings");
 bag!(VoiceCallManager, "org.ofono.VoiceCallManager");
-bag!(ConnectionManager, "org.ofono.ConnectionManager");
 
 bag!(Message, "org.ofono.Message");
 
@@ -143,6 +142,151 @@ impl MessageManager {
 
     #[zbus(signal)]
     pub async fn incoming_message(em: &SignalEmitter<'_>, message: &str, info: &Props) -> zbus::Result<()>;
+}
+
+/// oFono's ConnectionManager: a property bag plus contexts.
+#[derive(Default)]
+pub struct ConnectionManager {
+    props: Props,
+    pub contexts: Vec<OwnedObjectPath>,
+}
+
+#[interface(name = "org.ofono.ConnectionManager")]
+impl ConnectionManager {
+    fn get_properties(&self) -> Props {
+        copy(&self.props)
+    }
+
+    async fn set_property(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>, name: String, value: OwnedVariant) -> zbus::fdo::Result<()> {
+        self.props.insert(name.clone(), value.try_clone().map_err(zbus::Error::from)?);
+        Self::property_changed(&em, &name, &value).await?;
+        Ok(())
+    }
+
+    async fn get_contexts(&self, #[zbus(object_server)] server: &ObjectServer) -> Vec<(OwnedObjectPath, Props)> {
+        let mut out = vec![];
+        for path in &self.contexts {
+            let ctx = server.interface::<_, ConnectionContext>(path).await.unwrap();
+            out.push((path.clone(), copy(&ctx.get().await.props)));
+        }
+        out
+    }
+
+    async fn add_context(
+        &mut self,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+        r#type: String,
+    ) -> OwnedObjectPath {
+        let path = OwnedObjectPath::try_from(format!("{}/context{}", em.path(), self.contexts.len() + 1)).unwrap();
+        let ctx = ConnectionContext::new(&r#type, "");
+        let props = copy(&ctx.props);
+        server.at(&path, ctx).await.unwrap();
+        self.contexts.push(path.clone());
+        Self::context_added(&em, path.as_ref(), &props).await.unwrap();
+        path
+    }
+
+    #[zbus(signal)]
+    async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn context_added(em: &SignalEmitter<'_>, path: ObjectPath<'_>, props: &Props) -> zbus::Result<()>;
+}
+
+impl Bag for ConnectionManager {
+    fn props(&mut self) -> &mut Props {
+        &mut self.props
+    }
+    async fn emit(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()> {
+        Self::property_changed(em, name, value).await
+    }
+}
+
+fn ov<'a>(v: impl Into<Variant<'a>>) -> OwnedVariant {
+    OwnedVariant::try_from(v.into()).unwrap()
+}
+
+/// A connection context that comes up like ofono-binder's: rmnet interface,
+/// static /30 IPv4 and a /64 IPv6 address.
+pub struct ConnectionContext {
+    pub props: Props,
+}
+
+impl ConnectionContext {
+    pub fn new(ty: &str, apn: &str) -> ConnectionContext {
+        let props = Props::from([
+            ("Type".to_owned(), ov(ty)),
+            ("AccessPointName".to_owned(), ov(apn)),
+            ("Active".to_owned(), ov(false)),
+            ("Protocol".to_owned(), ov("dual")),
+            ("AuthenticationMethod".to_owned(), ov("any")),
+            ("Settings".to_owned(), ov(HashMap::<String, Variant>::new())),
+            ("IPv6.Settings".to_owned(), ov(HashMap::<String, Variant>::new())),
+        ]);
+        ConnectionContext { props }
+    }
+}
+
+#[interface(name = "org.ofono.ConnectionContext")]
+impl ConnectionContext {
+    fn get_properties(&self) -> Props {
+        copy(&self.props)
+    }
+
+    async fn set_property(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>, name: String, value: OwnedVariant) -> zbus::fdo::Result<()> {
+        let mut changes = vec![(name.clone(), value.try_clone().map_err(zbus::Error::from)?)];
+        if name == "Active" {
+            let up = bool::try_from(value.try_clone().map_err(zbus::Error::from)?).unwrap_or(false);
+            let (v4, v6): (HashMap<String, Variant>, HashMap<String, Variant>) = if up {
+                (
+                    HashMap::from([
+                        ("Interface".into(), Variant::from("rmnet_data2")),
+                        ("Method".into(), "static".into()),
+                        ("Address".into(), "10.172.70.13".into()),
+                        ("Netmask".into(), "255.255.255.252".into()),
+                        ("Gateway".into(), "10.172.70.14".into()),
+                        ("DomainNameServers".into(), Variant::from(vec!["1.1.1.1".to_owned()])),
+                    ]),
+                    HashMap::from([
+                        ("Interface".into(), Variant::from("rmnet_data2")),
+                        ("Address".into(), "240a:b:48fa:638a::1".into()),
+                        ("PrefixLength".into(), 64u8.into()),
+                    ]),
+                )
+            } else {
+                (HashMap::new(), HashMap::new())
+            };
+            changes.push(("Settings".into(), ov(v4)));
+            changes.push(("IPv6.Settings".into(), ov(v6)));
+        }
+        for (k, v) in changes {
+            self.props.insert(k.clone(), v.try_clone().map_err(zbus::Error::from)?);
+            Self::property_changed(&em, &k, &v).await?;
+        }
+        Ok(())
+    }
+
+    #[zbus(signal)]
+    async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
+}
+
+/// Sailfish oFono's data SIM selection.
+#[derive(Default)]
+pub struct NemoModemManager {
+    pub data_modem: String,
+    pub data_sim_set: Vec<String>,
+}
+
+#[interface(name = "org.nemomobile.ofono.ModemManager")]
+impl NemoModemManager {
+    fn get_default_data_modem(&self) -> OwnedObjectPath {
+        OwnedObjectPath::try_from(self.data_modem.as_str()).unwrap()
+    }
+
+    fn set_default_data_sim(&mut self, imsi: String) {
+        self.data_sim_set.push(imsi);
+    }
 }
 
 #[derive(Default)]
@@ -210,6 +354,7 @@ impl FakeOfono {
     pub async fn start(bus: &Bus) -> FakeOfono {
         let conn = bus.connect().await;
         conn.object_server().at("/", Manager::default()).await.unwrap();
+        conn.object_server().at("/", NemoModemManager { data_modem: "/ril_0".into(), ..Default::default() }).await.unwrap();
         conn.request_name("org.ofono").await.unwrap();
         FakeOfono { conn }
     }
@@ -320,6 +465,25 @@ impl FakeOfono {
             ("SentTime".to_owned(), OwnedVariant::try_from(Variant::from(sent_time)).unwrap()),
         ]);
         MessageManager::incoming_message(mm.signal_emitter(), text, &info).await.unwrap();
+    }
+
+    /// Add a data context to the modem at `path` and mark it packet-attached.
+    pub async fn add_context(&self, modem: &str, ty: &str, apn: &str) -> String {
+        let server = self.conn.object_server();
+        self.update(modem, "org.ofono.ConnectionManager", Props::from([("Attached".to_owned(), ov(true))]), true).await;
+        let cm = server.interface::<_, ConnectionManager>(modem).await.unwrap();
+        let path = OwnedObjectPath::try_from(format!("{modem}/context{}", cm.get().await.contexts.len() + 1)).unwrap();
+        let ctx = ConnectionContext::new(ty, apn);
+        let props = copy(&ctx.props);
+        server.at(&path, ctx).await.unwrap();
+        cm.get_mut().await.contexts.push(path.clone());
+        ConnectionManager::context_added(cm.signal_emitter(), path.as_ref(), &props).await.unwrap();
+        path.to_string()
+    }
+
+    pub async fn context(&self, path: &str) -> Props {
+        let ctx = self.conn.object_server().interface::<_, ConnectionContext>(path).await.unwrap();
+        copy(&ctx.get().await.props)
     }
 
     pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {

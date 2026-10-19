@@ -142,3 +142,85 @@ async fn ct_sim_ofono_restart() {
     let problems = watcher.await.unwrap();
     assert!(problems.is_empty(), "{problems:#?}");
 }
+
+const MESSAGING: &str = "org.freedesktop.ModemManager1.Modem.Messaging";
+const SMS: &str = "org.freedesktop.ModemManager1.Sms";
+
+async fn call<R: serde::de::DeserializeOwned + zbus::Type>(
+    conn: &Connection,
+    path: &str,
+    iface: &str,
+    method: &str,
+    args: &(impl serde::Serialize + zbus::DynamicType),
+) -> zbus::Result<R> {
+    conn.call_method(Some(MM_SERVICE), path, Some(iface), method, args).await?.body().deserialize()
+}
+
+/// Bring the CT trace to a registered modem and return the client and the
+/// path of the ril_0 modem object.
+async fn registered(bus: &Bus, ofono: &FakeOfono) -> (Connection, String) {
+    let (client, _watcher) = start_bridge(bus).await;
+    ofono.replay(&trace("ct-ofono-restart"), async || tokio::time::sleep(Duration::from_millis(1)).await).await;
+    let objects = settle(&client, |o| {
+        modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == mm::MMModemState::MM_MODEM_STATE_REGISTERED)
+    })
+    .await;
+    let path = modem(&objects, "ril_0").unwrap().0.to_string();
+    (client, path)
+}
+
+#[tokio::test]
+async fn sms_round_trip() {
+    use mm::{MMSmsPduType as pdu, MMSmsState as state};
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem) = registered(&bus, &ofono).await;
+
+    // Incoming: announced with Added(path, received = true).
+    let rule = MatchRule::builder().msg_type(Type::Signal).interface(MESSAGING).member("Added").build().unwrap();
+    let mut added = MessageStream::for_match_rule(rule, &client, None).await.unwrap();
+    ofono.incoming_sms("/ril_0", "你好 hello", "+10000000001", "2026-10-20T01:00:00+0900").await;
+    let msg = tokio::time::timeout(Duration::from_secs(3), added.next()).await.unwrap().unwrap().unwrap();
+    let (sms, received): (OwnedObjectPath, bool) = msg.body().deserialize().unwrap();
+    assert!(received);
+    let props = get_all(&client, sms.as_str(), SMS).await.unwrap();
+    assert_eq!(prop::<String>(&props, "Text"), "你好 hello");
+    assert_eq!(prop::<String>(&props, "Number"), "+10000000001");
+    assert_eq!(prop::<String>(&props, "Timestamp"), "2026-10-20T01:00:00+0900");
+    assert_eq!(prop::<u32>(&props, "State"), state::MM_SMS_STATE_RECEIVED);
+    assert_eq!(prop::<u32>(&props, "PduType"), pdu::MM_SMS_PDU_TYPE_DELIVER);
+    let listed: Vec<OwnedObjectPath> = call(&client, &modem, MESSAGING, "List", &()).await.unwrap();
+    assert_eq!(listed, [sms.clone()]);
+
+    // Outgoing: Create composes, Send sends and returns once oFono says "sent".
+    let create = |text: &'static str| {
+        let (client, modem) = (client.clone(), modem.clone());
+        async move {
+            let props = HashMap::from([("number", Variant::from("+10000000002")), ("text", Variant::from(text))]);
+            call::<OwnedObjectPath>(&client, &modem, MESSAGING, "Create", &(props,)).await.unwrap()
+        }
+    };
+    let out = create("bye").await;
+    let props = get_all(&client, out.as_str(), SMS).await.unwrap();
+    assert_eq!(prop::<u32>(&props, "State"), state::MM_SMS_STATE_UNKNOWN);
+    assert_eq!(prop::<u32>(&props, "PduType"), pdu::MM_SMS_PDU_TYPE_SUBMIT);
+    assert!(ofono.sent_sms("/ril_0").await.is_empty(), "Create must not send");
+
+    call::<()>(&client, out.as_str(), SMS, "Send", &()).await.unwrap();
+    let props = get_all(&client, out.as_str(), SMS).await.unwrap();
+    assert_eq!(prop::<u32>(&props, "State"), state::MM_SMS_STATE_SENT);
+    assert_eq!(ofono.sent_sms("/ril_0").await, [("+10000000002".to_owned(), "bye".to_owned())]);
+
+    // A failed send is an error and leaves the message unsent.
+    let failing = create("FAIL").await;
+    assert!(call::<()>(&client, failing.as_str(), SMS, "Send", &()).await.is_err());
+    let props = get_all(&client, failing.as_str(), SMS).await.unwrap();
+    assert_eq!(prop::<u32>(&props, "State"), state::MM_SMS_STATE_UNKNOWN);
+
+    // Delete drops it from the list and the bus.
+    call::<()>(&client, &modem, MESSAGING, "Delete", &(sms.clone(),)).await.unwrap();
+    assert!(get_all(&client, sms.as_str(), SMS).await.is_err());
+    let listed: Vec<OwnedObjectPath> = call(&client, &modem, MESSAGING, "List", &()).await.unwrap();
+    assert!(!listed.contains(&sms));
+}

@@ -17,7 +17,7 @@ use zbus::{
     {ObjectPath, OwnedObjectPath, OwnedVariant, Variant},
 };
 
-use crate::{MM_PATH, mm_3gpp::Modem3gpp, mm_modem::Modem};
+use crate::{MM_PATH, mm_3gpp::Modem3gpp, mm_messaging::Messaging, mm_modem::Modem};
 
 pub type IfaceProps = HashMap<String, HashMap<String, OwnedVariant>>;
 
@@ -37,6 +37,7 @@ macro_rules! for_modem_interfaces {
     ($f:ident ( $($arg:expr),* )) => {{
         $f::<Modem>($($arg),*).await?;
         $f::<Modem3gpp>($($arg),*).await?;
+        $f::<Messaging>($($arg),*).await?;
     }};
 }
 

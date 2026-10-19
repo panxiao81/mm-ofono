@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use mm_ofono::{manager::Manager, mm_3gpp::Modem3gpp, mm_modem::Modem, mm_sim::Sim};
+use mm_ofono::{manager::Manager, mm_3gpp::Modem3gpp, mm_messaging::Messaging, mm_modem::Modem, mm_sim::Sim, mm_sms::Sms};
 use zbus::object_server::Interface;
 use zbus_xml::{Arg, ArgDirection, Node};
 
@@ -83,4 +83,14 @@ fn modem() {
 #[test]
 fn modem_3gpp() {
     assert_conforms(&Modem3gpp::default());
+}
+
+#[test]
+fn messaging() {
+    assert_conforms(&Messaging::default());
+}
+
+#[test]
+fn sms() {
+    assert_conforms(&Sms::default());
 }

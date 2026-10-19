@@ -104,6 +104,47 @@ bag!(RadioSettings, "org.ofono.RadioSettings");
 bag!(VoiceCallManager, "org.ofono.VoiceCallManager");
 bag!(ConnectionManager, "org.ofono.ConnectionManager");
 
+bag!(Message, "org.ofono.Message");
+
+/// oFono's MessageManager: incoming messages are pushed by the test;
+/// SendMessage creates a message object that goes pending -> sent (or
+/// failed when the text is "FAIL").
+#[derive(Default)]
+pub struct MessageManager {
+    pub sent: Vec<(String, String)>,
+    count: u32,
+}
+
+#[interface(name = "org.ofono.MessageManager")]
+impl MessageManager {
+    async fn send_message(
+        &mut self,
+        #[zbus(connection)] conn: &Connection,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+        to: String,
+        text: String,
+    ) -> OwnedObjectPath {
+        self.count += 1;
+        let path = OwnedObjectPath::try_from(format!("{}/message_{}", em.path(), self.count)).unwrap();
+        conn.object_server().at(&path, Message::default()).await.unwrap();
+        let outcome = if text == "FAIL" { "failed" } else { "sent" };
+        self.sent.push((to, text));
+        let (conn, p) = (conn.clone(), path.clone());
+        tokio::spawn(async move {
+            let em = SignalEmitter::new(&conn, p.clone()).unwrap();
+            for state in ["pending", outcome] {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                Message::property_changed(&em, "State", &state.into()).await.unwrap();
+            }
+            conn.object_server().remove::<Message, _>(&p).await.unwrap();
+        });
+        path
+    }
+
+    #[zbus(signal)]
+    pub async fn incoming_message(em: &SignalEmitter<'_>, message: &str, info: &Props) -> zbus::Result<()>;
+}
+
 #[derive(Default)]
 pub struct Manager {
     modems: Vec<OwnedObjectPath>,
@@ -260,6 +301,29 @@ impl FakeOfono {
         if !exists {
             self.update(path, iface, initial, false).await;
         }
+    }
+}
+
+impl FakeOfono {
+    async fn message_manager(&self, path: &str) -> zbus::object_server::InterfaceRef<MessageManager> {
+        let server = self.conn.object_server();
+        if server.interface::<_, MessageManager>(path).await.is_err() {
+            server.at(path, MessageManager::default()).await.unwrap();
+        }
+        server.interface::<_, MessageManager>(path).await.unwrap()
+    }
+
+    pub async fn incoming_sms(&self, path: &str, text: &str, sender: &str, sent_time: &str) {
+        let mm = self.message_manager(path).await;
+        let info = Props::from([
+            ("Sender".to_owned(), OwnedVariant::try_from(Variant::from(sender)).unwrap()),
+            ("SentTime".to_owned(), OwnedVariant::try_from(Variant::from(sent_time)).unwrap()),
+        ]);
+        MessageManager::incoming_message(mm.signal_emitter(), text, &info).await.unwrap();
+    }
+
+    pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {
+        self.message_manager(path).await.get().await.sent.clone()
     }
 }
 

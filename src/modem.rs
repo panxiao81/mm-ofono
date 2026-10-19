@@ -13,9 +13,11 @@ use crate::derive::{self, CONNMAN, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE
 use crate::device::{self, PhysicalDevice};
 use crate::mm::MMModemStateChangeReason as reason;
 use crate::mm_3gpp::Modem3gpp;
+use crate::mm_messaging::{self, Messaging};
 use crate::mm_modem::Modem;
+use crate::mm_sms::SmsData;
 use crate::mm_sim::Sim;
-use crate::ofono::{self, Change, MODEM, Props};
+use crate::ofono::{self, MODEM, Props, Signal};
 use crate::{MM_PATH, objects};
 
 /// oFono interfaces whose properties feed the ModemManager objects.
@@ -42,6 +44,7 @@ pub fn spawn(conn: Connection, path: String, props: Props) -> mpsc::UnboundedSen
         modem: None,
         sim: None,
         device: None,
+        pending_sms: vec![],
     };
     tokio::spawn(task.run(props, rx));
     tx
@@ -56,16 +59,18 @@ struct Task {
     modem: Option<OwnedObjectPath>,
     sim: Option<OwnedObjectPath>,
     device: Option<PhysicalDevice>,
+    /// Messages that arrived before the modem was exported.
+    pending_sms: Vec<SmsData>,
 }
 
 impl Task {
     async fn run(mut self, props: Props, mut rx: mpsc::UnboundedReceiver<Event>) {
         // Subscribe before reading anything, so no change can slip between.
-        let changes = match ofono::property_changes(&self.conn, &self.path).await {
-            Ok(c) => c,
+        let signals = match ofono::signals(&self.conn, &self.path).await {
+            Ok(s) => s,
             Err(e) => return warn!("{}: can't watch oFono: {e}", self.path),
         };
-        let mut changes = std::pin::pin!(changes);
+        let mut signals = std::pin::pin!(signals);
 
         self.ofono.ifaces.entry(MODEM.into()).or_default().apply_snapshot(props);
         self.fetch(MODEM); // the announced properties may predate the subscription
@@ -74,7 +79,7 @@ impl Task {
 
         loop {
             tokio::select! {
-                Some(change) = changes.next() => self.change(change),
+                Some(signal) = signals.next() => self.signal(signal).await,
                 Some(event) = rx.recv() => match event {
                     Event::Snapshot(iface, props) => self.snapshot(&iface, props),
                     Event::Removed => break,
@@ -102,12 +107,18 @@ impl Task {
         });
     }
 
-    fn change(&mut self, c: Change) {
-        let Some(iface) = self.ofono.ifaces.get_mut(&c.iface) else { return };
-        let interfaces = c.iface == MODEM && c.key == "Interfaces";
-        iface.change(c.key, c.value);
-        if interfaces {
-            self.interfaces_changed();
+    async fn signal(&mut self, signal: Signal) {
+        match signal {
+            Signal::Property { path, iface, key, value } if path == self.path => {
+                let Some(i) = self.ofono.ifaces.get_mut(&iface) else { return };
+                let interfaces = iface == MODEM && key == "Interfaces";
+                i.change(key, value);
+                if interfaces {
+                    self.interfaces_changed();
+                }
+            }
+            Signal::Property { .. } => {}
+            Signal::Sms { text, info, immediate } => self.received_sms(text, info, immediate).await,
         }
     }
 
@@ -128,6 +139,19 @@ impl Task {
             } else if !present {
                 self.ofono.ifaces.remove(iface);
             }
+        }
+    }
+
+    async fn received_sms(&mut self, text: String, info: Props, immediate: bool) {
+        let sms = SmsData::received(text, &info, immediate);
+        info!("{}: SMS from {}", self.path, sms.number);
+        match &self.modem {
+            Some(path) => {
+                if let Err(e) = mm_messaging::deliver(&self.conn, path, sms).await {
+                    warn!("{}: delivering SMS: {e}", self.path);
+                }
+            }
+            None => self.pending_sms.push(sms),
         }
     }
 
@@ -171,8 +195,12 @@ impl Task {
                 info!("{}: exporting {path} (state {})", self.path, status.state);
                 let ofono_path = self.path.clone();
                 server.at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity }).await?;
-                server.at(&path, Modem3gpp { ofono_path, status: status_3gpp }).await?;
+                server.at(&path, Modem3gpp { ofono_path: ofono_path.clone(), status: status_3gpp }).await?;
+                server.at(&path, Messaging { ofono_path, messages: vec![] }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
+                for sms in std::mem::take(&mut self.pending_sms) {
+                    mm_messaging::deliver(&self.conn, &path, sms).await?;
+                }
                 self.modem = Some(path);
             }
             Some(path) => {

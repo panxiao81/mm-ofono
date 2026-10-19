@@ -73,34 +73,41 @@ pub fn strings(props: &Props, key: &str) -> Vec<String> {
     }
 }
 
-/// A change on one oFono interface of a modem.
+/// A signal from oFono about one modem or its child objects.
 #[derive(Debug)]
-pub struct Change {
-    pub iface: String,
-    pub key: String,
-    pub value: OwnedVariant,
+pub enum Signal {
+    /// `PropertyChanged` on `path` (the modem or e.g. a data context).
+    Property { path: String, iface: String, key: String, value: OwnedVariant },
+    /// `MessageManager.IncomingMessage`, or `ImmediateMessage` (class 0) when `immediate`.
+    Sms { text: String, info: Props, immediate: bool },
 }
 
-/// `PropertyChanged` from every interface of one modem, in emission order
-/// (one match rule on the path, so interfaces can't overtake each other).
-pub async fn property_changes(
-    conn: &Connection,
-    path: &str,
-) -> zbus::Result<impl Stream<Item = Change> + use<>> {
+/// Every oFono signal on the modem's path and below, in emission order
+/// (one match rule, so interfaces and objects can't overtake each other).
+pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<Item = Signal> + use<>> {
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
-        .path(path.to_owned())
-        .member("PropertyChanged")
+        .path_namespace(path.to_owned())
         .build()?;
     let stream = MessageStream::for_match_rule(rule, conn, None).await?;
     Ok(stream.filter_map(|msg| async move {
         let msg = msg.ok()?;
-        let iface = msg.header().interface()?.to_string();
+        let header = msg.header();
+        let iface = header.interface()?.to_string();
         if !iface.starts_with("org.ofono.") {
             return None;
         }
-        let (key, value): (String, OwnedVariant) = msg.body().deserialize().ok()?;
-        Some(Change { iface, key, value })
+        match header.member()?.as_str() {
+            "PropertyChanged" => {
+                let (key, value): (String, OwnedVariant) = msg.body().deserialize().ok()?;
+                Some(Signal::Property { path: header.path()?.to_string(), iface, key, value })
+            }
+            m @ ("IncomingMessage" | "ImmediateMessage") => {
+                let (text, info): (String, Props) = msg.body().deserialize().ok()?;
+                Some(Signal::Sms { text, info, immediate: m == "ImmediateMessage" })
+            }
+            _ => None,
+        }
     }))
 }
 

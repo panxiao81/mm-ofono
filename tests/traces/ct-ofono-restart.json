@@ -1,0 +1,1910 @@
+[
+ {
+  "at": 35,
+  "removed": "/ril_0"
+ },
+ {
+  "at": 37,
+  "removed": "/ril_1"
+ },
+ {
+  "at": 786,
+  "added": "/ril_1",
+  "props": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": false
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": []
+   },
+   "Features": {
+    "type": "as",
+    "data": []
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 787,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Powered",
+   {
+    "type": "b",
+    "data": true
+   }
+  ]
+ },
+ {
+  "at": 788,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Interfaces",
+   {
+    "type": "as",
+    "data": [
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 798,
+  "path": "/ril_1",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "110",
+     "08",
+     "911",
+     "000",
+     "112",
+     "999",
+     "119"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 798,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Interfaces",
+   {
+    "type": "as",
+    "data": [
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 799,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Features",
+   {
+    "type": "as",
+    "data": [
+     "sim"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 947,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "snapshot": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": [
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   },
+   "Features": {
+    "type": "as",
+    "data": [
+     "sim"
+    ]
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 965,
+  "added": "/ril_0",
+  "props": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": false
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": []
+   },
+   "Features": {
+    "type": "as",
+    "data": []
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 965,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Powered",
+   {
+    "type": "b",
+    "data": true
+   }
+  ]
+ },
+ {
+  "at": 966,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Interfaces",
+   {
+    "type": "as",
+    "data": [
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 967,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "110",
+     "08",
+     "911",
+     "000",
+     "112",
+     "999",
+     "119"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 968,
+  "path": "/ril_1",
+  "iface": "org.ofono.SimManager",
+  "snapshot": {
+   "Present": {
+    "type": "b",
+    "data": false
+   }
+  }
+ },
+ {
+  "at": 969,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Interfaces",
+   {
+    "type": "as",
+    "data": [
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 969,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Features",
+   {
+    "type": "as",
+    "data": [
+     "sim"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1012,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "Present",
+   {
+    "type": "b",
+    "data": true
+   }
+  ]
+ },
+ {
+  "at": 1020,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "snapshot": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": [
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   },
+   "Features": {
+    "type": "as",
+    "data": [
+     "sim"
+    ]
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 1025,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "snapshot": {
+   "Present": {
+    "type": "b",
+    "data": true
+   },
+   "FixedDialing": {
+    "type": "b",
+    "data": false
+   },
+   "BarredDialing": {
+    "type": "b",
+    "data": false
+   },
+   "SubscriberNumbers": {
+    "type": "as",
+    "data": []
+   },
+   "LockedPins": {
+    "type": "as",
+    "data": []
+   },
+   "PinRequired": {
+    "type": "s",
+    "data": "none"
+   },
+   "Retries": {
+    "type": "a{sy}",
+    "data": {}
+   },
+   "CardSlotCount": {
+    "type": "u",
+    "data": 1
+   },
+   "ActiveCardSlot": {
+    "type": "u",
+    "data": 1
+   }
+  }
+ },
+ {
+  "at": 1145,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "184119",
+     "911",
+     "120",
+     "112",
+     "118",
+     "000",
+     "186118",
+     "110",
+     "08",
+     "186110",
+     "119",
+     "999",
+     "184118",
+     "186119",
+     "122",
+     "184110"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1148,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "184119",
+     "911",
+     "120",
+     "112",
+     "118",
+     "000",
+     "186118",
+     "110",
+     "08",
+     "186110",
+     "119",
+     "999",
+     "184118",
+     "186119",
+     "122",
+     "184110"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1180,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Revision",
+   {
+    "type": "s",
+    "data": "sdx55.rmtefs-484436-87"
+   }
+  ]
+ },
+ {
+  "at": 1182,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Serial",
+   {
+    "type": "s",
+    "data": "350000000000017"
+   }
+  ]
+ },
+ {
+  "at": 1184,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "SoftwareVersionNumber",
+   {
+    "type": "s",
+    "data": "87"
+   }
+  ]
+ },
+ {
+  "at": 1219,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Revision",
+   {
+    "type": "s",
+    "data": "sdx55.rmtefs-484436-87"
+   }
+  ]
+ },
+ {
+  "at": 1221,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Serial",
+   {
+    "type": "s",
+    "data": "350000000000017"
+   }
+  ]
+ },
+ {
+  "at": 1223,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "SoftwareVersionNumber",
+   {
+    "type": "s",
+    "data": "87"
+   }
+  ]
+ },
+ {
+  "at": 1301,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1312,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "CardIdentifier",
+   {
+    "type": "s",
+    "data": "89860320000000000000"
+   }
+  ]
+ },
+ {
+  "at": 1423,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "Retries",
+   {
+    "type": "a{sy}",
+    "data": {
+     "pin": 3,
+     "pin2": 3,
+     "puk": 10,
+     "puk2": 10
+    }
+   }
+  ]
+ },
+ {
+  "at": 1500,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "SubscriberIdentity",
+   {
+    "type": "s",
+    "data": "460110000000000"
+   }
+  ]
+ },
+ {
+  "at": 1501,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "MobileCountryCode",
+   {
+    "type": "s",
+    "data": "460"
+   }
+  ]
+ },
+ {
+  "at": 1501,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "MobileNetworkCode",
+   {
+    "type": "s",
+    "data": "11"
+   }
+  ]
+ },
+ {
+  "at": 1502,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Interfaces",
+   {
+    "type": "as",
+    "data": [
+     "org.ofono.NetworkTime",
+     "org.ofono.SmsHistory",
+     "org.ofono.SimAuthentication",
+     "org.ofono.MessageWaiting",
+     "org.ofono.AllowedAccessPoints",
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1503,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Interfaces",
+   {
+    "type": "as",
+    "data": [
+     "org.ofono.RadioSettings",
+     "org.ofono.CellBroadcast",
+     "org.ofono.SimToolkit",
+     "org.ofono.Phonebook",
+     "org.ofono.ConnectionManager",
+     "org.ofono.SmartMessaging",
+     "org.ofono.PushNotification",
+     "org.ofono.MessageManager",
+     "org.ofono.CallBarring",
+     "org.ofono.CallForwarding",
+     "org.ofono.NetworkTime",
+     "org.ofono.SmsHistory",
+     "org.ofono.SimAuthentication",
+     "org.ofono.MessageWaiting",
+     "org.ofono.AllowedAccessPoints",
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1504,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Features",
+   {
+    "type": "as",
+    "data": [
+     "rat",
+     "cbs",
+     "stk",
+     "gprs",
+     "sms",
+     "sim"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1511,
+  "path": "/ril_0",
+  "iface": "org.ofono.ConnectionManager",
+  "snapshot": {
+   "Attached": {
+    "type": "b",
+    "data": false
+   },
+   "Bearer": {
+    "type": "s",
+    "data": "none"
+   },
+   "RoamingAllowed": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   }
+  }
+ },
+ {
+  "at": 1525,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "ServiceProviderName",
+   {
+    "type": "s",
+    "data": "中国电信"
+   }
+  ]
+ },
+ {
+  "at": 1645,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 1841,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "changed": [
+   "SubscriberNumbers",
+   {
+    "type": "as",
+    "data": [
+     "+10000000000"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 27959,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "snapshot": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Revision": {
+    "type": "s",
+    "data": "sdx55.rmtefs-484436-87"
+   },
+   "Serial": {
+    "type": "s",
+    "data": "350000000000017"
+   },
+   "SoftwareVersionNumber": {
+    "type": "s",
+    "data": "87"
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": [
+     "org.ofono.RadioSettings",
+     "org.ofono.CellBroadcast",
+     "org.ofono.SimToolkit",
+     "org.ofono.Phonebook",
+     "org.ofono.ConnectionManager",
+     "org.ofono.SmartMessaging",
+     "org.ofono.PushNotification",
+     "org.ofono.MessageManager",
+     "org.ofono.CallBarring",
+     "org.ofono.CallForwarding",
+     "org.ofono.NetworkTime",
+     "org.ofono.SmsHistory",
+     "org.ofono.SimAuthentication",
+     "org.ofono.MessageWaiting",
+     "org.ofono.AllowedAccessPoints",
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   },
+   "Features": {
+    "type": "as",
+    "data": [
+     "rat",
+     "cbs",
+     "stk",
+     "gprs",
+     "sms",
+     "sim"
+    ]
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 27959,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "snapshot": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Revision": {
+    "type": "s",
+    "data": "sdx55.rmtefs-484436-87"
+   },
+   "Serial": {
+    "type": "s",
+    "data": "350000000000017"
+   },
+   "SoftwareVersionNumber": {
+    "type": "s",
+    "data": "87"
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": [
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   },
+   "Features": {
+    "type": "as",
+    "data": [
+     "sim"
+    ]
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 27975,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "snapshot": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Revision": {
+    "type": "s",
+    "data": "sdx55.rmtefs-484436-87"
+   },
+   "Serial": {
+    "type": "s",
+    "data": "350000000000017"
+   },
+   "SoftwareVersionNumber": {
+    "type": "s",
+    "data": "87"
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": [
+     "org.ofono.RadioSettings",
+     "org.ofono.CellBroadcast",
+     "org.ofono.SimToolkit",
+     "org.ofono.Phonebook",
+     "org.ofono.ConnectionManager",
+     "org.ofono.SmartMessaging",
+     "org.ofono.PushNotification",
+     "org.ofono.MessageManager",
+     "org.ofono.CallBarring",
+     "org.ofono.CallForwarding",
+     "org.ofono.NetworkTime",
+     "org.ofono.SmsHistory",
+     "org.ofono.SimAuthentication",
+     "org.ofono.MessageWaiting",
+     "org.ofono.AllowedAccessPoints",
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   },
+   "Features": {
+    "type": "as",
+    "data": [
+     "rat",
+     "cbs",
+     "stk",
+     "gprs",
+     "sms",
+     "sim"
+    ]
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 27980,
+  "path": "/ril_0",
+  "iface": "org.ofono.RadioSettings",
+  "snapshot": {
+   "TechnologyPreference": {
+    "type": "s",
+    "data": "lte"
+   },
+   "AvailableTechnologies": {
+    "type": "as",
+    "data": [
+     "gsm",
+     "umts",
+     "lte",
+     "nr"
+    ]
+   }
+  }
+ },
+ {
+  "at": 27984,
+  "path": "/ril_0",
+  "iface": "org.ofono.CellBroadcast",
+  "snapshot": {
+   "Powered": {
+    "type": "b",
+    "data": false
+   },
+   "Topics": {
+    "type": "s",
+    "data": ""
+   }
+  }
+ },
+ {
+  "at": 27988,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimToolkit",
+  "snapshot": {
+   "IdleModeText": {
+    "type": "s",
+    "data": ""
+   },
+   "IdleModeIcon": {
+    "type": "y",
+    "data": 0
+   },
+   "MainMenuTitle": {
+    "type": "s",
+    "data": ""
+   },
+   "MainMenuIcon": {
+    "type": "y",
+    "data": 0
+   },
+   "MainMenu": {
+    "type": "a(sy)",
+    "data": []
+   }
+  }
+ },
+ {
+  "at": 27992,
+  "path": "/ril_0",
+  "iface": "org.ofono.ConnectionManager",
+  "snapshot": {
+   "Attached": {
+    "type": "b",
+    "data": false
+   },
+   "Bearer": {
+    "type": "s",
+    "data": "none"
+   },
+   "RoamingAllowed": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   }
+  }
+ },
+ {
+  "at": 28039,
+  "path": "/ril_0",
+  "iface": "org.ofono.MessageManager",
+  "changed": [
+   "ServiceCenterAddress",
+   {
+    "type": "s",
+    "data": "+10000000000"
+   }
+  ]
+ },
+ {
+  "at": 28040,
+  "path": "/ril_0",
+  "iface": "org.ofono.MessageManager",
+  "snapshot": {
+   "ServiceCenterAddress": {
+    "type": "s",
+    "data": "+10000000000"
+   },
+   "UseDeliveryReports": {
+    "type": "b",
+    "data": false
+   },
+   "Bearer": {
+    "type": "s",
+    "data": "cs-preferred"
+   },
+   "Alphabet": {
+    "type": "s",
+    "data": "default"
+   }
+  }
+ },
+ {
+  "at": 28096,
+  "path": "/ril_0",
+  "iface": "org.ofono.CallBarring",
+  "snapshot": {
+   "VoiceOutgoing": {
+    "type": "s",
+    "data": "disabled"
+   },
+   "VoiceIncoming": {
+    "type": "s",
+    "data": "disabled"
+   }
+  }
+ },
+ {
+  "at": 28100,
+  "path": "/ril_0",
+  "iface": "org.ofono.CallForwarding",
+  "snapshot": {
+   "VoiceUnconditional": {
+    "type": "s",
+    "data": ""
+   },
+   "VoiceBusy": {
+    "type": "s",
+    "data": ""
+   },
+   "VoiceNoReply": {
+    "type": "s",
+    "data": ""
+   },
+   "VoiceNoReplyTimeout": {
+    "type": "q",
+    "data": 20
+   },
+   "VoiceNotReachable": {
+    "type": "s",
+    "data": ""
+   },
+   "ForwardingFlagOnSim": {
+    "type": "b",
+    "data": false
+   }
+  }
+ },
+ {
+  "at": 28104,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimAuthentication",
+  "snapshot": {
+   "NetworkAccessIdentity": {
+    "type": "s",
+    "data": "460110000000000@ims.mnc011.mcc460.3gppnetwork.org"
+   }
+  }
+ },
+ {
+  "at": 28108,
+  "path": "/ril_0",
+  "iface": "org.ofono.MessageWaiting",
+  "snapshot": {
+   "VoicemailWaiting": {
+    "type": "b",
+    "data": false
+   },
+   "VoicemailMessageCount": {
+    "type": "y",
+    "data": 0
+   },
+   "VoicemailMailboxNumber": {
+    "type": "s",
+    "data": ""
+   }
+  }
+ },
+ {
+  "at": 28113,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "snapshot": {
+   "EmergencyNumbers": {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  }
+ },
+ {
+  "at": 28145,
+  "path": "/ril_0",
+  "iface": "org.ofono.SimManager",
+  "snapshot": {
+   "Present": {
+    "type": "b",
+    "data": true
+   },
+   "CardIdentifier": {
+    "type": "s",
+    "data": "89860320000000000000"
+   },
+   "SubscriberIdentity": {
+    "type": "s",
+    "data": "460110000000000"
+   },
+   "ServiceProviderName": {
+    "type": "s",
+    "data": "中国电信"
+   },
+   "FixedDialing": {
+    "type": "b",
+    "data": false
+   },
+   "BarredDialing": {
+    "type": "b",
+    "data": false
+   },
+   "MobileCountryCode": {
+    "type": "s",
+    "data": "460"
+   },
+   "MobileNetworkCode": {
+    "type": "s",
+    "data": "11"
+   },
+   "SubscriberNumbers": {
+    "type": "as",
+    "data": [
+     "+10000000000"
+    ]
+   },
+   "LockedPins": {
+    "type": "as",
+    "data": []
+   },
+   "PinRequired": {
+    "type": "s",
+    "data": "none"
+   },
+   "Retries": {
+    "type": "a{sy}",
+    "data": {
+     "pin": 3,
+     "pin2": 3,
+     "puk": 10,
+     "puk2": 10
+    }
+   },
+   "CardSlotCount": {
+    "type": "u",
+    "data": 1
+   },
+   "ActiveCardSlot": {
+    "type": "u",
+    "data": 1
+   }
+  }
+ },
+ {
+  "at": 28488,
+  "path": "/ril_1",
+  "iface": "org.ofono.Modem",
+  "snapshot": {
+   "Online": {
+    "type": "b",
+    "data": false
+   },
+   "Powered": {
+    "type": "b",
+    "data": true
+   },
+   "Lockdown": {
+    "type": "b",
+    "data": false
+   },
+   "Emergency": {
+    "type": "b",
+    "data": false
+   },
+   "Revision": {
+    "type": "s",
+    "data": "sdx55.rmtefs-484436-87"
+   },
+   "Serial": {
+    "type": "s",
+    "data": "350000000000017"
+   },
+   "SoftwareVersionNumber": {
+    "type": "s",
+    "data": "87"
+   },
+   "Interfaces": {
+    "type": "as",
+    "data": [
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   },
+   "Features": {
+    "type": "as",
+    "data": [
+     "sim"
+    ]
+   },
+   "Type": {
+    "type": "s",
+    "data": "hardware"
+   }
+  }
+ },
+ {
+  "at": 28519,
+  "path": "/ril_1",
+  "iface": "org.ofono.VoiceCallManager",
+  "snapshot": {
+   "EmergencyNumbers": {
+    "type": "as",
+    "data": [
+     "118",
+     "110",
+     "08",
+     "911",
+     "000",
+     "112",
+     "999",
+     "119"
+    ]
+   }
+  }
+ },
+ {
+  "at": 28557,
+  "path": "/ril_1",
+  "iface": "org.ofono.SimManager",
+  "snapshot": {
+   "Present": {
+    "type": "b",
+    "data": false
+   }
+  }
+ },
+ {
+  "at": 28811,
+  "path": "/ril_1",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "120",
+     "08",
+     "110",
+     "911",
+     "119",
+     "112",
+     "999",
+     "000"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 28813,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 28818,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 28843,
+  "path": "/ril_1",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "120",
+     "08",
+     "110",
+     "911",
+     "119",
+     "112",
+     "999",
+     "000"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 29277,
+  "path": "/ril_1",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "120",
+     "08",
+     "110",
+     "911",
+     "119",
+     "112",
+     "999",
+     "000"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 29309,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 32217,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 32222,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 32227,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 32258,
+  "path": "/ril_0",
+  "iface": "org.ofono.VoiceCallManager",
+  "changed": [
+   "EmergencyNumbers",
+   {
+    "type": "as",
+    "data": [
+     "118",
+     "186118",
+     "120",
+     "110",
+     "184119",
+     "186110",
+     "184118",
+     "184110",
+     "186119",
+     "119",
+     "112",
+     "911",
+     "122",
+     "999"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 33862,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Online",
+   {
+    "type": "b",
+    "data": true
+   }
+  ]
+ },
+ {
+  "at": 33882,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "Status",
+   {
+    "type": "s",
+    "data": "searching"
+   }
+  ]
+ },
+ {
+  "at": 33882,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Interfaces",
+   {
+    "type": "as",
+    "data": [
+     "org.ofono.NetworkMonitor",
+     "org.ofono.IpMultimediaSystem",
+     "org.ofono.SupplementaryServices",
+     "org.ofono.NetworkRegistration",
+     "org.ofono.CallSettings",
+     "org.ofono.CallVolume",
+     "org.ofono.RadioSettings",
+     "org.ofono.CellBroadcast",
+     "org.ofono.SimToolkit",
+     "org.ofono.Phonebook",
+     "org.ofono.ConnectionManager",
+     "org.ofono.SmartMessaging",
+     "org.ofono.PushNotification",
+     "org.ofono.MessageManager",
+     "org.ofono.CallBarring",
+     "org.ofono.CallForwarding",
+     "org.ofono.NetworkTime",
+     "org.ofono.SmsHistory",
+     "org.ofono.SimAuthentication",
+     "org.ofono.MessageWaiting",
+     "org.ofono.AllowedAccessPoints",
+     "org.ofono.VoiceCallManager",
+     "org.ofono.SimManager",
+     "org.nemomobile.ofono.CellInfo",
+     "org.nemomobile.ofono.SimInfo"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 33882,
+  "path": "/ril_0",
+  "iface": "org.ofono.Modem",
+  "changed": [
+   "Features",
+   {
+    "type": "as",
+    "data": [
+     "ussd",
+     "net",
+     "rat",
+     "cbs",
+     "stk",
+     "gprs",
+     "sms",
+     "sim"
+    ]
+   }
+  ]
+ },
+ {
+  "at": 33893,
+  "path": "/ril_0",
+  "iface": "org.ofono.CallVolume",
+  "changed": [
+   "Muted",
+   {
+    "type": "b",
+    "data": false
+   }
+  ]
+ },
+ {
+  "at": 33893,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "Status",
+   {
+    "type": "s",
+    "data": "roaming"
+   }
+  ]
+ },
+ {
+  "at": 33895,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "CellId",
+   {
+    "type": "u",
+    "data": 1
+   }
+  ]
+ },
+ {
+  "at": 33895,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "Technology",
+   {
+    "type": "s",
+    "data": "lte"
+   }
+  ]
+ },
+ {
+  "at": 33895,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "Name",
+   {
+    "type": "s",
+    "data": "中国电信 (KDDI)"
+   }
+  ]
+ },
+ {
+  "at": 33896,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "MobileCountryCode",
+   {
+    "type": "s",
+    "data": "440"
+   }
+  ]
+ },
+ {
+  "at": 33896,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "MobileNetworkCode",
+   {
+    "type": "s",
+    "data": "51"
+   }
+  ]
+ },
+ {
+  "at": 33917,
+  "path": "/ril_0",
+  "iface": "org.ofono.SupplementaryServices",
+  "snapshot": {
+   "State": {
+    "type": "s",
+    "data": "idle"
+   }
+  }
+ },
+ {
+  "at": 33917,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "snapshot": {
+   "Status": {
+    "type": "s",
+    "data": "roaming"
+   },
+   "Mode": {
+    "type": "s",
+    "data": "auto"
+   },
+   "CellId": {
+    "type": "u",
+    "data": 1
+   },
+   "Technology": {
+    "type": "s",
+    "data": "lte"
+   },
+   "MobileCountryCode": {
+    "type": "s",
+    "data": "440"
+   },
+   "MobileNetworkCode": {
+    "type": "s",
+    "data": "51"
+   },
+   "Name": {
+    "type": "s",
+    "data": "中国电信 (KDDI)"
+   }
+  }
+ },
+ {
+  "at": 33917,
+  "path": "/ril_0",
+  "iface": "org.ofono.CallVolume",
+  "snapshot": {
+   "SpeakerVolume": {
+    "type": "y",
+    "data": 0
+   },
+   "MicrophoneVolume": {
+    "type": "y",
+    "data": 0
+   },
+   "Muted": {
+    "type": "b",
+    "data": false
+   }
+  }
+ },
+ {
+  "at": 33937,
+  "path": "/ril_0",
+  "iface": "org.ofono.NetworkRegistration",
+  "changed": [
+   "Strength",
+   {
+    "type": "y",
+    "data": 40
+   }
+  ]
+ },
+ {
+  "at": 34118,
+  "path": "/ril_0",
+  "iface": "org.ofono.CallSettings",
+  "snapshot": {
+   "CallingLinePresentation": {
+    "type": "s",
+    "data": "unknown"
+   },
+   "CallingNamePresentation": {
+    "type": "s",
+    "data": "unknown"
+   },
+   "ConnectedLinePresentation": {
+    "type": "s",
+    "data": "unknown"
+   },
+   "ConnectedLineRestriction": {
+    "type": "s",
+    "data": "unknown"
+   },
+   "CalledLinePresentation": {
+    "type": "s",
+    "data": "disabled"
+   },
+   "CallingLineRestriction": {
+    "type": "s",
+    "data": "unknown"
+   },
+   "HideCallerId": {
+    "type": "s",
+    "data": "default"
+   },
+   "VoiceCallWaiting": {
+    "type": "s",
+    "data": "disabled"
+   }
+  }
+ },
+ {
+  "at": 34260,
+  "path": "/ril_0",
+  "iface": "org.ofono.IpMultimediaSystem",
+  "changed": [
+   "Registered",
+   {
+    "type": "b",
+    "data": true
+   }
+  ]
+ },
+ {
+  "at": 34260,
+  "path": "/ril_0",
+  "iface": "org.ofono.IpMultimediaSystem",
+  "changed": [
+   "VoiceCapable",
+   {
+    "type": "b",
+    "data": true
+   }
+  ]
+ },
+ {
+  "at": 34260,
+  "path": "/ril_0",
+  "iface": "org.ofono.IpMultimediaSystem",
+  "changed": [
+   "SmsCapable",
+   {
+    "type": "b",
+    "data": true
+   }
+  ]
+ }
+]

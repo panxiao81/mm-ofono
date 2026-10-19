@@ -101,6 +101,11 @@ impl Request {
             ("Protocol", self.protocol().to_owned()),
             ("AuthenticationMethod", self.auth_method().to_owned()),
         ];
+        // No APN, as with MM, means the default one: the context's
+        // provisioned APN stays (oFono refuses an empty one anyway).
+        if self.apn.is_empty() {
+            want.remove(0);
+        }
         if !self.user.is_empty() {
             want.push(("Username", self.user.clone()));
             want.push(("Password", self.password.clone()));
@@ -231,6 +236,8 @@ mod tests {
         let r = Request { apn: "ctnet".into(), ip_type: family::MM_BEARER_IP_FAMILY_IPV4, ..Default::default() };
         let c = props(vec![("AccessPointName", "ctnet".into()), ("Protocol", "dual".into()), ("AuthenticationMethod", "any".into())]);
         assert_eq!(r.context_settings(&c), [("Protocol", "ip".to_owned())]);
+        let default_apn = Request { apn: String::new(), ..r.clone() };
+        assert_eq!(default_apn.context_settings(&c), [("Protocol", "ip".to_owned())], "empty APN keeps ctnet");
     }
 
     #[test]

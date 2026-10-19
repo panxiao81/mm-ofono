@@ -138,9 +138,14 @@ fn prefix_from_netmask(mask: &str) -> Option<u32> {
     mask.parse::<std::net::Ipv4Addr>().ok().map(|m| u32::from(m).count_ones())
 }
 
+/// No IP config: libmm-glib requires "method" even then, as ModemManager sends.
+fn ip_none() -> Dict {
+    Dict::from([("method".into(), v(method::MM_BEARER_IP_METHOD_UNKNOWN))])
+}
+
 /// ModemManager IP config from an oFono `Settings` / `IPv6.Settings` dict.
 fn ip_config(settings: &Props, v6: bool) -> Dict {
-    let Some(address) = ofono::str(settings, "Address") else { return Dict::new() };
+    let Some(address) = ofono::str(settings, "Address") else { return ip_none() };
     let dhcp = ofono::str(settings, "Method") == Some("dhcp");
     let mut d = Dict::from([
         ("method".into(), v(if dhcp { method::MM_BEARER_IP_METHOD_DHCP } else { method::MM_BEARER_IP_METHOD_STATIC })),
@@ -180,14 +185,19 @@ fn dict(ctx: &Props, key: &str) -> Props {
     }
 }
 
+impl Status {
+    pub fn disconnected() -> Status {
+        Status { connected: false, interface: String::new(), ip4: ip_none(), ip6: ip_none() }
+    }
+}
+
 pub fn status(ctx: &Props) -> Status {
-    let connected = ofono::bool(ctx, "Active") == Some(true);
-    if !connected {
-        return Status::default();
+    if ofono::bool(ctx, "Active") != Some(true) {
+        return Status::disconnected();
     }
     let (v4, v6) = (dict(ctx, "Settings"), dict(ctx, "IPv6.Settings"));
     let interface = ofono::str(&v4, "Interface").or_else(|| ofono::str(&v6, "Interface")).unwrap_or_default().to_owned();
-    Status { connected, interface, ip4: ip_config(&v4, false), ip6: ip_config(&v6, true) }
+    Status { connected: true, interface, ip4: ip_config(&v4, false), ip6: ip_config(&v6, true) }
 }
 
 #[cfg(test)]
@@ -247,6 +257,8 @@ mod tests {
         assert_eq!(u32::try_from(s.ip4["method"].try_clone().unwrap()).unwrap(), method::MM_BEARER_IP_METHOD_STATIC);
         assert_eq!(u32::try_from(s.ip6["prefix"].try_clone().unwrap()).unwrap(), 64);
 
-        assert_eq!(status(&props(vec![("Active", false.into())])), Status::default());
+        let down = status(&props(vec![("Active", false.into())]));
+        assert_eq!(down, Status::disconnected());
+        assert_eq!(u32::try_from(down.ip4["method"].try_clone().unwrap()).unwrap(), method::MM_BEARER_IP_METHOD_UNKNOWN);
     }
 }

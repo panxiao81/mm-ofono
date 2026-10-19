@@ -264,6 +264,10 @@ async fn data_round_trip() {
     let bearers: Vec<OwnedObjectPath> = prop(m, "Bearers");
     assert_eq!(bearers, [bearer.clone()]);
 
+    // Connecting made this SIM the data SIM (none was set).
+    let nemo = ofono.conn.object_server().interface::<_, common::NemoModemManager>("/").await.unwrap();
+    assert_eq!(nemo.get().await.data_sim_set.len(), 1);
+
     // Same APN: the same bearer.
     assert_eq!(connect().await, bearer);
 

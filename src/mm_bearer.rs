@@ -38,7 +38,7 @@ pub struct Bearer {
 impl Bearer {
     /// Re-derive the status from the shared context cache and announce what changed.
     pub async fn refresh(&self, em: &SignalEmitter<'_>) -> zbus::Result<()> {
-        let new = self.contexts.lock().unwrap().get(&self.context).map(bearer::status).unwrap_or_default();
+        let new = self.contexts.lock().unwrap().get(&self.context).map(bearer::status).unwrap_or_else(Status::disconnected);
         let old = std::mem::replace(&mut *self.status.lock().unwrap(), new.clone());
         if old.connected != new.connected {
             self.connected_changed(em).await?;
@@ -73,15 +73,22 @@ impl Bearer {
     /// oFono only brings up data on the default data SIM; connecting on a
     /// modem makes its SIM that one, then waits for packet attach.
     async fn make_data_modem(&self, conn: &Connection) -> Result<()> {
-        let current: std::result::Result<OwnedObjectPath, _> = async {
+        // Returns the path as a string, "" when no modem has data.
+        let current: std::result::Result<String, _> = async {
             conn.call_method(Some(SERVICE), "/", Some("org.nemomobile.ofono.ModemManager"), "GetDefaultDataModem", &())
                 .await?
                 .body()
-                .deserialize::<OwnedObjectPath>()
+                .deserialize::<String>()
         }
         .await;
-        let Ok(current) = current else { return Ok(()) }; // not Sailfish oFono: nothing to choose
-        if current.as_str() != self.ofono_path {
+        let current = match current {
+            Ok(c) => c,
+            // Only a missing interface means "not Sailfish oFono, nothing to choose".
+            Err(zbus::Error::MethodError(name, ..)) if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod"
+                || name.as_str() == "org.freedesktop.DBus.Error.UnknownInterface" => return Ok(()),
+            Err(e) => return Err(e.into()),
+        };
+        if current != self.ofono_path {
             let sim = ofono::get_properties(conn, &self.ofono_path, SIM_MANAGER).await?;
             let imsi = ofono::str(&sim, "SubscriberIdentity").unwrap_or_default().to_owned();
             conn.call_method(Some(SERVICE), "/", Some("org.nemomobile.ofono.ModemManager"), "SetDefaultDataSim", &(imsi,))

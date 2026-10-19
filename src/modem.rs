@@ -178,7 +178,8 @@ impl Task {
 
     async fn received_sms(&mut self, text: String, info: Props, immediate: bool) {
         let sms = SmsData::received(text, &info, immediate);
-        info!("{}: SMS from {}", self.path, sms.number);
+        // Like ModemManager, no personal data (numbers, text) in the log.
+        info!("{}: SMS received", self.path);
         match &self.modem {
             Some(path) => {
                 if let Err(e) = mm_messaging::deliver(&self.conn, path, sms).await {

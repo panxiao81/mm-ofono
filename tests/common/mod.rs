@@ -280,12 +280,16 @@ pub struct NemoModemManager {
 
 #[interface(name = "org.nemomobile.ofono.ModemManager")]
 impl NemoModemManager {
-    fn get_default_data_modem(&self) -> OwnedObjectPath {
-        OwnedObjectPath::try_from(self.data_modem.as_str()).unwrap()
+    /// A string, not an object path, and "" when no modem has data — as on
+    /// the real Sailfish oFono.
+    fn get_default_data_modem(&self) -> String {
+        self.data_modem.clone()
     }
 
     fn set_default_data_sim(&mut self, imsi: String) {
         self.data_sim_set.push(imsi);
+        // ponytail: the fake has one SIM-bearing modem
+        self.data_modem = "/ril_0".into();
     }
 }
 
@@ -354,7 +358,7 @@ impl FakeOfono {
     pub async fn start(bus: &Bus) -> FakeOfono {
         let conn = bus.connect().await;
         conn.object_server().at("/", Manager::default()).await.unwrap();
-        conn.object_server().at("/", NemoModemManager { data_modem: "/ril_0".into(), ..Default::default() }).await.unwrap();
+        conn.object_server().at("/", NemoModemManager::default()).await.unwrap();
         conn.request_name("org.ofono").await.unwrap();
         FakeOfono { conn }
     }

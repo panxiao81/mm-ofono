@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, watch};
 use tracing::{info, warn};
 use zbus::{Connection, OwnedObjectPath};
 
-use crate::derive::{self, CONNMAN, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE};
+use crate::derive::{self, CONNMAN, NETMON, NETREG, OfonoModem, RADIO, SIM_MANAGER, VOICE};
 use crate::device::{self, PhysicalDevice};
 use crate::bearer::{CONTEXT, Contexts};
 use crate::mm::{MMCallDirection, MMModemState as state, MMModemStateChangeReason as reason};
@@ -73,6 +73,7 @@ pub enum Event {
     CellInfo(bool),
     Cell(String, Cell),
     Calls(Vec<(String, Props)>),
+    ServingCell(Props),
     Removed,
 }
 
@@ -196,6 +197,10 @@ impl Task {
                     Event::CellInfo(on) => self.cell_info(on).await,
                     Event::Cell(path, cell) => drop(self.cells.insert(path, cell)),
                     Event::Calls(list) => self.voice_calls.extend(list),
+                    Event::ServingCell(props) => {
+                        let i = self.ofono.ifaces.entry(NETMON.into()).or_default();
+                        (i.props, i.fetched) = (props, true);
+                    }
                     Event::Removed => break,
                 },
                 // A lower slot was announced (or went away): maybe our turn.
@@ -225,6 +230,23 @@ impl Task {
                 Props::new()
             });
             let _ = events.send(Event::Snapshot(iface, props));
+        });
+    }
+
+    /// The serving cell's raw RSSI, for rating signal quality like MM.
+    /// Asked once per Strength change (the modem reports those anyway),
+    /// rather than holding a CellInfo subscription.
+    fn fetch_serving_cell(&self) {
+        if !self.ofono.strings(MODEM, "Interfaces").iter().any(|i| i == NETMON) {
+            return;
+        }
+        let (conn, path, events) = (self.conn.clone(), self.path.clone(), self.events.clone());
+        tokio::spawn(async move {
+            let reply = conn.call_method(Some(ofono::SERVICE), path.as_str(), Some(NETMON), "GetServingCellInformation", &()).await;
+            match reply.and_then(|r| r.body().deserialize::<Props>()) {
+                Ok(props) => drop(events.send(Event::ServingCell(props))),
+                Err(e) => warn!("{path}: GetServingCellInformation: {e}"),
+            }
         });
     }
 
@@ -328,9 +350,13 @@ impl Task {
             Signal::Property { path, iface, key, value } if path == self.path => {
                 let Some(i) = self.ofono.ifaces.get_mut(&iface) else { return };
                 let interfaces = iface == MODEM && key == "Interfaces";
+                let strength = iface == NETREG && key == "Strength";
                 i.change(key, value);
                 if interfaces {
                     self.interfaces_changed();
+                }
+                if strength {
+                    self.fetch_serving_cell();
                 }
             }
             Signal::Property { path, iface, key, value } if iface == CONTEXT => {
@@ -365,6 +391,9 @@ impl Task {
     fn snapshot(&mut self, iface: &str, props: Props) {
         if let Some(i) = self.ofono.ifaces.get_mut(iface) {
             i.apply_snapshot(props);
+        }
+        if iface == NETREG {
+            self.fetch_serving_cell();
         }
     }
 

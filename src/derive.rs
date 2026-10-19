@@ -18,6 +18,9 @@ pub const NETREG: &str = "org.ofono.NetworkRegistration";
 pub const RADIO: &str = "org.ofono.RadioSettings";
 pub const VOICE: &str = "org.ofono.VoiceCallManager";
 pub const CONNMAN: &str = "org.ofono.ConnectionManager";
+/// Not a property interface: the cached reply of its
+/// GetServingCellInformation, refreshed whenever Strength changes.
+pub const NETMON: &str = "org.ofono.NetworkMonitor";
 
 /// Cached properties of every interface of one oFono modem; an interface
 /// is present iff oFono lists it in `org.ofono.Modem.Interfaces`.
@@ -174,6 +177,11 @@ pub fn preference_for(supported: &[(u32, u32)], (allowed, preferred): (u32, u32)
     RATS.iter().find(|r| r.1 == top).map(|r| r.0)
 }
 
+/// MM_RSSI_TO_QUALITY: -113..-51 dBm scaled to 0..100, with C's truncation.
+fn rssi_quality(dbm: i32) -> u32 {
+    (100 - (dbm.clamp(-113, -51) + 51) * 100 / (-113 + 51)) as u32
+}
+
 pub fn status(m: &OfonoModem) -> ModemStatus {
     let powered = m.bool(MODEM, "Powered") == Some(true);
     let online = m.bool(MODEM, "Online") == Some(true);
@@ -209,8 +217,11 @@ pub fn status(m: &OfonoModem) -> ModemStatus {
         _ => HashMap::new(),
     };
 
-    let strength = match m.get(NETREG, "Strength") {
-        Some(Variant::U8(s)) => u32::from(*s),
+    let strength = match (m.get(NETMON, "Strength"), m.get(NETREG, "Strength")) {
+        // The serving cell's RSSI in ASU, rated like MM's QMI plugin does.
+        (Some(Variant::U8(asu @ 0..=31)), _) => rssi_quality(-113 + 2 * i32::from(*asu)),
+        // oFono's own rating is the worst of RSSI/RSRP/RSRQ/SNR, well below MM's.
+        (_, Some(Variant::U8(s))) => u32::from(*s),
         _ => 0,
     };
 
@@ -496,6 +507,28 @@ mod tests {
     }
 
     /// The CT SIM roaming on KDDI, as in tests/traces/ct-ofono-restart.json.
+    #[test]
+    fn quality_from_serving_cell_rssi() {
+        let base = [
+            (MODEM, "Powered", true.into()),
+            (MODEM, "Online", true.into()),
+            (SIM_MANAGER, "Present", true.into()),
+            (SIM_MANAGER, "PinRequired", "none".into()),
+            (NETREG, "Status", "registered".into()),
+            (NETREG, "Strength", 35u8.into()),
+        ];
+        let rated = |asu: u8| {
+            let mut props = base.to_vec();
+            props.push((NETMON, "Strength", asu.into()));
+            status(&modem(&props)).signal_quality
+        };
+        assert_eq!(rated(30), (97, true), "-53 dBm, as MM rates it");
+        assert_eq!(rated(31), (100, true));
+        assert_eq!(rated(0), (0, true));
+        assert_eq!(rated(99), (35, true), "unknown: oFono's rating");
+        assert_eq!(status(&modem(&base)).signal_quality, (35, true), "no NetworkMonitor");
+    }
+
     #[test]
     fn roaming_on_lte() {
         let mut retries = HashMap::new();

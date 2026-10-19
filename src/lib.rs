@@ -1,3 +1,4 @@
+pub mod derive;
 pub mod device;
 pub mod error;
 pub mod manager;

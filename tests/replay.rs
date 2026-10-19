@@ -365,3 +365,103 @@ async fn ussd_round_trip() {
     assert_eq!(reply, "You chose 1");
     wait_state(session::MM_MODEM_3GPP_USSD_SESSION_STATE_IDLE).await;
 }
+
+const VOICE: &str = "org.freedesktop.ModemManager1.Modem.Voice";
+const CALL: &str = "org.freedesktop.ModemManager1.Call";
+
+async fn call_state(client: &Connection, call: &str) -> (i32, i32) {
+    let p = get_all(client, call, CALL).await.unwrap();
+    (prop(&p, "State"), prop(&p, "StateReason"))
+}
+
+async fn wait_call(client: &Connection, call: &str, want: u32) -> (i32, i32) {
+    for _ in 0..100 {
+        let s = call_state(client, call).await;
+        if s.0 == want as i32 {
+            return s;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    panic!("{call} never reached state {want}, is {:?}", call_state(client, call).await);
+}
+
+#[tokio::test]
+async fn voice_outgoing_call() {
+    use mm::{MMCallDirection as dir, MMCallState as st, MMCallStateReason as why};
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+
+    let rule = MatchRule::builder().msg_type(Type::Signal).interface(CALL).member("StateChanged").build().unwrap();
+    let mut changes = MessageStream::for_match_rule(rule, &client, None).await.unwrap();
+
+    let props = HashMap::from([("number", Variant::from("0901234567"))]);
+    let call: OwnedObjectPath = call(&client, &modem_path, VOICE, "CreateCall", &(props,)).await.unwrap();
+    let p = get_all(&client, call.as_str(), CALL).await.unwrap();
+    assert_eq!(prop::<i32>(&p, "State"), st::MM_CALL_STATE_UNKNOWN as i32);
+    assert_eq!(prop::<i32>(&p, "Direction"), dir::MM_CALL_DIRECTION_OUTGOING as i32);
+    assert!(ofono.voice("/ril_0").await.get().await.dialled.is_empty(), "CreateCall must not dial");
+
+    super_call(&client, call.as_str(), "Start").await;
+    assert_eq!(ofono.voice("/ril_0").await.get().await.dialled, ["0901234567"]);
+    wait_call(&client, call.as_str(), st::MM_CALL_STATE_RINGING_OUT).await;
+    let listed: Vec<OwnedObjectPath> = self::call(&client, &modem_path, VOICE, "ListCalls", &()).await.unwrap();
+    assert_eq!(listed, [call.clone()], "the dialled call is adopted, not duplicated");
+
+    let ofono_call = ofono.voice("/ril_0").await.get().await.calls[0].clone();
+    ofono.remote_answer(&ofono_call).await;
+    assert_eq!(wait_call(&client, call.as_str(), st::MM_CALL_STATE_ACTIVE).await.1, why::MM_CALL_STATE_REASON_ACCEPTED as i32);
+
+    let _: () = self::call(&client, call.as_str(), CALL, "SendDtmf", &("12#",)).await.unwrap();
+    assert_eq!(ofono.voice("/ril_0").await.get().await.tones, ["12#"]);
+
+    super_call(&client, call.as_str(), "Hangup").await;
+    assert_eq!(wait_call(&client, call.as_str(), st::MM_CALL_STATE_TERMINATED).await.1, why::MM_CALL_STATE_REASON_TERMINATED as i32);
+    let listed: Vec<OwnedObjectPath> = self::call(&client, &modem_path, VOICE, "ListCalls", &()).await.unwrap();
+    assert_eq!(listed, [call.clone()], "ended calls stay until deleted");
+
+    let _: () = self::call(&client, &modem_path, VOICE, "DeleteCall", &(call.clone(),)).await.unwrap();
+    assert!(get_all(&client, call.as_str(), CALL).await.is_err());
+
+    // StateChanged went through every step, in order.
+    let mut seen = vec![];
+    while let Ok(Some(Ok(m))) = tokio::time::timeout(Duration::from_millis(200), changes.next()).await {
+        let (_, new, _): (i32, i32, u32) = m.body().deserialize().unwrap();
+        seen.push(new);
+    }
+    let want = [st::MM_CALL_STATE_DIALING, st::MM_CALL_STATE_RINGING_OUT, st::MM_CALL_STATE_ACTIVE, st::MM_CALL_STATE_TERMINATED].map(|s| s as i32);
+    assert_eq!(seen, want);
+}
+
+async fn super_call(client: &Connection, call: &str, method: &str) {
+    let _: () = self::call(client, call, CALL, method, &()).await.unwrap();
+}
+
+#[tokio::test]
+async fn voice_incoming_call() {
+    use mm::{MMCallDirection as dir, MMCallState as st, MMCallStateReason as why};
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+
+    let rule = MatchRule::builder().msg_type(Type::Signal).interface(VOICE).member("CallAdded").build().unwrap();
+    let mut added = MessageStream::for_match_rule(rule, &client, None).await.unwrap();
+    let ofono_call = ofono.incoming_call("/ril_0", "+81900000001").await;
+    let msg = tokio::time::timeout(Duration::from_secs(3), added.next()).await.unwrap().unwrap().unwrap();
+    let call: OwnedObjectPath = msg.body().deserialize().unwrap();
+
+    let p = get_all(&client, call.as_str(), CALL).await.unwrap();
+    assert_eq!(prop::<i32>(&p, "State"), st::MM_CALL_STATE_RINGING_IN as i32);
+    assert_eq!(prop::<i32>(&p, "StateReason"), why::MM_CALL_STATE_REASON_INCOMING_NEW as i32);
+    assert_eq!(prop::<i32>(&p, "Direction"), dir::MM_CALL_DIRECTION_INCOMING as i32);
+    assert_eq!(prop::<String>(&p, "Number"), "+81900000001");
+
+    super_call(&client, call.as_str(), "Accept").await;
+    wait_call(&client, call.as_str(), st::MM_CALL_STATE_ACTIVE).await;
+    ofono.remote_hangup(&ofono_call).await;
+    wait_call(&client, call.as_str(), st::MM_CALL_STATE_TERMINATED).await;
+    let listed: Vec<OwnedObjectPath> = self::call(&client, &modem_path, VOICE, "ListCalls", &()).await.unwrap();
+    assert_eq!(listed, [call]);
+}

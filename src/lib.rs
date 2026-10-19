@@ -6,16 +6,19 @@ pub mod manager;
 pub mod mm;
 pub mod mm_3gpp;
 pub mod mm_bearer;
+pub mod mm_call;
 pub mod mm_messaging;
 pub mod mm_modem;
 pub mod mm_signal;
 pub mod mm_sim;
 pub mod mm_sms;
 pub mod mm_ussd;
+pub mod mm_voice;
 pub mod modem;
 pub mod objects;
 pub mod ofono;
 pub mod signal;
+pub mod voice;
 
 use std::collections::HashMap;
 

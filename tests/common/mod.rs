@@ -101,7 +101,6 @@ bag!(OfonoModem, "org.ofono.Modem");
 bag!(SimManager, "org.ofono.SimManager");
 bag!(NetworkRegistration, "org.ofono.NetworkRegistration");
 bag!(RadioSettings, "org.ofono.RadioSettings");
-bag!(VoiceCallManager, "org.ofono.VoiceCallManager");
 
 bag!(Message, "org.ofono.Message");
 
@@ -269,6 +268,125 @@ impl ConnectionContext {
 
     #[zbus(signal)]
     async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
+}
+
+/// oFono's VoiceCallManager. Dial announces the call (CallAdded) *before*
+/// returning, the order that makes adopting the dialled call necessary.
+#[derive(Default)]
+pub struct VoiceCallManager {
+    props: Props,
+    pub calls: Vec<OwnedObjectPath>,
+    pub dialled: Vec<String>,
+    pub tones: Vec<String>,
+    count: u32,
+}
+
+impl VoiceCallManager {
+    async fn new_call(&mut self, conn: &Connection, em: &SignalEmitter<'_>, state: &str, number: &str) -> OwnedObjectPath {
+        self.count += 1;
+        let path = OwnedObjectPath::try_from(format!("{}/voicecall{:02}", em.path(), self.count)).unwrap();
+        let call = VoiceCall { props: Props::from([("State".to_owned(), ov(state)), ("LineIdentification".to_owned(), ov(number)), ("Multiparty".to_owned(), ov(false))]) };
+        let props = copy(&call.props);
+        conn.object_server().at(&path, call).await.unwrap();
+        self.calls.push(path.clone());
+        Self::call_added(em, path.as_ref(), &props).await.unwrap();
+        path
+    }
+}
+
+#[interface(name = "org.ofono.VoiceCallManager")]
+impl VoiceCallManager {
+    fn get_properties(&self) -> Props {
+        copy(&self.props)
+    }
+
+    async fn dial(&mut self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>, number: String, _hide: String) -> OwnedObjectPath {
+        self.dialled.push(number.clone());
+        // oFono reports the number internationally formatted.
+        let path = self.new_call(conn, &em, "dialing", &format!("+81{}", number.trim_start_matches('0'))).await;
+        let (conn, p) = (conn.clone(), path.clone());
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            set_call_state(&conn, &p, "alerting").await;
+        });
+        path
+    }
+
+    async fn get_calls(&self, #[zbus(object_server)] server: &ObjectServer) -> Vec<(OwnedObjectPath, Props)> {
+        let mut out = vec![];
+        for c in &self.calls {
+            out.push((c.clone(), copy(&server.interface::<_, VoiceCall>(c).await.unwrap().get().await.props)));
+        }
+        out
+    }
+
+    fn send_tones(&mut self, tones: String) {
+        self.tones.push(tones);
+    }
+
+    #[zbus(signal)]
+    async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn call_added(em: &SignalEmitter<'_>, path: ObjectPath<'_>, props: &Props) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn call_removed(em: &SignalEmitter<'_>, path: ObjectPath<'_>) -> zbus::Result<()>;
+}
+
+impl Bag for VoiceCallManager {
+    fn props(&mut self) -> &mut Props {
+        &mut self.props
+    }
+    async fn emit(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()> {
+        Self::property_changed(em, name, value).await
+    }
+}
+
+pub struct VoiceCall {
+    props: Props,
+}
+
+#[interface(name = "org.ofono.VoiceCall")]
+impl VoiceCall {
+    fn get_properties(&self) -> Props {
+        copy(&self.props)
+    }
+
+    async fn answer(&self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) {
+        let (conn, p) = (conn.clone(), OwnedObjectPath::from(em.path().to_owned()));
+        tokio::spawn(async move { set_call_state(&conn, &p, "active").await });
+    }
+
+    async fn hangup(&self, #[zbus(connection)] conn: &Connection, #[zbus(signal_emitter)] em: SignalEmitter<'_>) {
+        let (conn, p) = (conn.clone(), OwnedObjectPath::from(em.path().to_owned()));
+        tokio::spawn(async move { end_call(&conn, &p, "local").await });
+    }
+
+    #[zbus(signal)]
+    async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn disconnect_reason(em: &SignalEmitter<'_>, reason: &str) -> zbus::Result<()>;
+}
+
+async fn set_call_state(conn: &Connection, call: &OwnedObjectPath, state: &str) {
+    let c = conn.object_server().interface::<_, VoiceCall>(call).await.unwrap();
+    c.get_mut().await.props.insert("State".into(), ov(state));
+    VoiceCall::property_changed(c.signal_emitter(), "State", &state.into()).await.unwrap();
+}
+
+/// What oFono does when a call ends: reason, disconnected, then removal.
+async fn end_call(conn: &Connection, call: &OwnedObjectPath, reason: &str) {
+    let server = conn.object_server();
+    let c = server.interface::<_, VoiceCall>(call).await.unwrap();
+    VoiceCall::disconnect_reason(c.signal_emitter(), reason).await.unwrap();
+    set_call_state(conn, call, "disconnected").await;
+    server.remove::<VoiceCall, _>(call).await.unwrap();
+    let modem = call.as_str().rsplit_once('/').unwrap().0.to_owned();
+    let vcm = server.interface::<_, VoiceCallManager>(modem.as_str()).await.unwrap();
+    vcm.get_mut().await.calls.retain(|p| p != call);
+    VoiceCallManager::call_removed(vcm.signal_emitter(), call.as_ref()).await.unwrap();
 }
 
 /// oFono's SupplementaryServices: "*100#" is a USSD balance query, "*#21#"
@@ -626,6 +744,24 @@ impl FakeOfono {
         let em = ss.signal_emitter().clone();
         ss.get_mut().await.set_state(&em, "user-response").await;
         SupplementaryServices::request_received(&em, text).await.unwrap();
+    }
+
+    pub async fn voice(&self, modem: &str) -> zbus::object_server::InterfaceRef<VoiceCallManager> {
+        self.conn.object_server().interface::<_, VoiceCallManager>(modem).await.unwrap()
+    }
+
+    pub async fn incoming_call(&self, modem: &str, number: &str) -> OwnedObjectPath {
+        let vcm = self.voice(modem).await;
+        let em = vcm.signal_emitter().clone();
+        vcm.get_mut().await.new_call(&self.conn, &em, "incoming", number).await
+    }
+
+    pub async fn remote_answer(&self, call: &OwnedObjectPath) {
+        set_call_state(&self.conn, call, "active").await;
+    }
+
+    pub async fn remote_hangup(&self, call: &OwnedObjectPath) {
+        end_call(&self.conn, call, "remote").await;
     }
 
     pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {

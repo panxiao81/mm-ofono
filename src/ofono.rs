@@ -86,6 +86,11 @@ pub enum Signal {
     /// expecting a Respond.
     UssdNotification(String),
     UssdRequest(String),
+    /// VoiceCallManager.CallAdded / CallRemoved, and a call's
+    /// DisconnectReason (which comes before its removal).
+    CallAdded { path: String, props: Props },
+    CallRemoved { path: String },
+    DisconnectReason { path: String, reason: String },
     /// Sailfish CellInfo: cells appear while someone is subscribed.
     CellsAdded(Vec<String>),
     CellsRemoved(Vec<String>),
@@ -126,6 +131,18 @@ pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<
             m @ ("NotificationReceived" | "RequestReceived") => {
                 let text: String = msg.body().deserialize().ok()?;
                 Some(if m == "NotificationReceived" { Signal::UssdNotification(text) } else { Signal::UssdRequest(text) })
+            }
+            "CallAdded" => {
+                let (path, props): (OwnedObjectPath, Props) = msg.body().deserialize().ok()?;
+                Some(Signal::CallAdded { path: path.to_string(), props })
+            }
+            "CallRemoved" => {
+                let path: OwnedObjectPath = msg.body().deserialize().ok()?;
+                Some(Signal::CallRemoved { path: path.to_string() })
+            }
+            "DisconnectReason" => {
+                let reason: String = msg.body().deserialize().ok()?;
+                Some(Signal::DisconnectReason { path: header.path()?.to_string(), reason })
             }
             m @ ("CellsAdded" | "CellsRemoved") => {
                 let paths: Vec<OwnedObjectPath> = msg.body().deserialize().ok()?;

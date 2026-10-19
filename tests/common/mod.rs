@@ -543,10 +543,19 @@ impl NemoModemManager {
         self.data_modem.clone()
     }
 
-    fn set_default_data_sim(&mut self, imsi: String) {
+    /// Like the real phone, a SIM without a voice path only registers once it
+    /// is the data SIM: the fake's searching /ril_0 then registers.
+    async fn set_default_data_sim(&mut self, #[zbus(object_server)] server: &ObjectServer, imsi: String) {
         self.data_sim_set.push(imsi);
         // ponytail: the fake has one SIM-bearing modem
         self.data_modem = "/ril_0".into();
+        if let Ok(netreg) = server.interface::<_, NetworkRegistration>("/ril_0").await {
+            let searching = netreg.get().await.props.get("Status").and_then(|v| String::try_from(v.try_clone().ok()?).ok()) == Some("searching".into());
+            if searching {
+                netreg.get_mut().await.props.insert("Status".into(), ov("roaming"));
+                NetworkRegistration::property_changed(netreg.signal_emitter(), "Status", &"roaming".into()).await.unwrap();
+            }
+        }
     }
 }
 

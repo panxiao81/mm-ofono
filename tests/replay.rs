@@ -553,6 +553,8 @@ async fn simple_connect_enables_a_disabled_modem() {
 
     ofono.set("/ril_0", "org.ofono.Modem", vec![("Online", false.into())]).await;
     settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_DISABLED)).await;
+    // And it won't register until it carries data (second SIM without IMS).
+    ofono.set("/ril_0", "org.ofono.NetworkRegistration", vec![("Status", "searching".into())]).await;
 
     let props = HashMap::from([("apn", Variant::from("ctnet")), ("ip-type", Variant::from(family::MM_BEARER_IP_FAMILY_IPV4V6))]);
     let bearer: OwnedObjectPath = call(&client, &modem_path, SIMPLE, "Connect", &(props,)).await.unwrap();

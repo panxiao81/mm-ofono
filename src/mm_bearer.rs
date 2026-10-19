@@ -73,27 +73,7 @@ impl Bearer {
     /// oFono only brings up data on the default data SIM; connecting on a
     /// modem makes its SIM that one, then waits for packet attach.
     async fn make_data_modem(&self, conn: &Connection) -> Result<()> {
-        // Returns the path as a string, "" when no modem has data.
-        let current: std::result::Result<String, _> = async {
-            conn.call_method(Some(SERVICE), "/", Some("org.nemomobile.ofono.ModemManager"), "GetDefaultDataModem", &())
-                .await?
-                .body()
-                .deserialize::<String>()
-        }
-        .await;
-        let current = match current {
-            Ok(c) => c,
-            // Only a missing interface means "not Sailfish oFono, nothing to choose".
-            Err(zbus::Error::MethodError(name, ..)) if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod"
-                || name.as_str() == "org.freedesktop.DBus.Error.UnknownInterface" => return Ok(()),
-            Err(e) => return Err(e.into()),
-        };
-        if current != self.ofono_path {
-            let sim = ofono::get_properties(conn, &self.ofono_path, SIM_MANAGER).await?;
-            let imsi = ofono::str(&sim, "SubscriberIdentity").unwrap_or_default().to_owned();
-            conn.call_method(Some(SERVICE), "/", Some("org.nemomobile.ofono.ModemManager"), "SetDefaultDataSim", &(imsi,))
-                .await?;
-        }
+        select_data_sim(conn, &self.ofono_path).await?;
         for _ in 0..60 {
             if ofono::bool(&ofono::get_properties(conn, &self.ofono_path, CONNMAN).await?, "Attached") == Some(true) {
                 return Ok(());
@@ -141,6 +121,39 @@ impl Bearer {
     }
 }
 
+/// Make `ofono_path`'s SIM oFono's default data SIM (Sailfish oFono). With
+/// dual SIM, a SIM that isn't the data SIM may not register at all (no voice
+/// path: e.g. no IMS on that slot and no 2G/3G), so this comes before
+/// waiting for registration.
+async fn select_data_sim(conn: &Connection, ofono_path: &str) -> Result<()> {
+    // Returns the path as a string, "" when no modem has data.
+    let current: std::result::Result<String, _> = async {
+        conn.call_method(Some(SERVICE), "/", Some("org.nemomobile.ofono.ModemManager"), "GetDefaultDataModem", &())
+            .await?
+            .body()
+            .deserialize::<String>()
+    }
+    .await;
+    let current = match current {
+        Ok(c) => c,
+        // Only a missing interface means "not Sailfish oFono, nothing to choose".
+        Err(zbus::Error::MethodError(name, ..))
+            if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod"
+                || name.as_str() == "org.freedesktop.DBus.Error.UnknownInterface" =>
+        {
+            return Ok(());
+        }
+        Err(e) => return Err(e.into()),
+    };
+    if current != ofono_path {
+        let sim = ofono::get_properties(conn, ofono_path, SIM_MANAGER).await?;
+        let imsi = ofono::str(&sim, "SubscriberIdentity").unwrap_or_default().to_owned();
+        conn.call_method(Some(SERVICE), "/", Some("org.nemomobile.ofono.ModemManager"), "SetDefaultDataSim", &(imsi,))
+            .await?;
+    }
+    Ok(())
+}
+
 /// What Simple.Connect does first, as in ModemManager: a disabled modem is
 /// enabled, then registration is awaited (clients such as NetworkManager
 /// rely on this instead of calling Enable themselves).
@@ -160,6 +173,7 @@ async fn bring_up(conn: &Connection, server: &ObjectServer, modem: &zbus::Object
         }
         _ => {}
     }
+    select_data_sim(conn, &ofono_path).await?;
     for _ in 0..120 {
         if iface.get().await.status.state >= st::MM_MODEM_STATE_REGISTERED {
             return Ok(());

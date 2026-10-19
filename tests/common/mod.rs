@@ -796,6 +796,13 @@ impl FakeOfono {
         end_call(&self.conn, call, "remote").await;
     }
 
+    /// A boolean property of the oFono Modem interface at `path`.
+    pub async fn modem_bool(&self, path: &str, key: &str) -> Option<bool> {
+        let m = self.conn.object_server().interface::<_, OfonoModem>(path).await.ok()?;
+        let v = m.get().await.props.get(key)?.try_clone().ok()?;
+        bool::try_from(v).ok()
+    }
+
     pub async fn polkit(&self) -> zbus::object_server::InterfaceRef<Polkit> {
         self.conn.object_server().interface::<_, Polkit>("/org/freedesktop/PolicyKit1/Authority").await.unwrap()
     }

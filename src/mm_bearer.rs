@@ -109,7 +109,10 @@ impl Bearer {
             return self.reload(conn, em).await;
         }
 
-        let netreg = ofono::get_properties(conn, &self.ofono_path, NETREG).await?;
+        let netreg = ofono::get_properties(conn, &self.ofono_path, NETREG).await.unwrap_or_default();
+        if !matches!(ofono::str(&netreg, "Status"), Some("registered" | "roaming")) {
+            return Err(CoreError::WrongState("not registered with a network".into()));
+        }
         if ofono::str(&netreg, "Status") == Some("roaming") {
             if !self.request.allow_roaming {
                 return Err(CoreError::Failed("roaming and the bearer doesn't allow it".into()));
@@ -138,14 +141,48 @@ impl Bearer {
     }
 }
 
+/// What Simple.Connect does first, as in ModemManager: a disabled modem is
+/// enabled, then registration is awaited (clients such as NetworkManager
+/// rely on this instead of calling Enable themselves).
+async fn bring_up(conn: &Connection, server: &ObjectServer, modem: &zbus::ObjectPath<'_>) -> Result<()> {
+    use crate::mm::MMModemState as st;
+    let iface = server.interface::<_, Modem>(modem).await?;
+    let (state, ofono_path) = {
+        let m = iface.get().await;
+        (m.status.state, m.ofono_path.clone())
+    };
+    match state {
+        st::MM_MODEM_STATE_LOCKED => return Err(CoreError::WrongState("the SIM is locked".into())),
+        st::MM_MODEM_STATE_FAILED => return Err(CoreError::WrongState("the modem has failed (no SIM?)".into())),
+        st::MM_MODEM_STATE_DISABLED => {
+            ofono::set_property(conn, &ofono_path, crate::ofono::MODEM, "Powered", true.into()).await?;
+            ofono::set_property(conn, &ofono_path, crate::ofono::MODEM, "Online", true.into()).await?;
+        }
+        _ => {}
+    }
+    for _ in 0..120 {
+        if iface.get().await.status.state >= st::MM_MODEM_STATE_REGISTERED {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    Err(CoreError::WrongState("not registered with a network".into()))
+}
+
 /// Export a bearer for `req` on the oFono modem `ofono_path`, on a fitting
 /// context (added if none fits). The caller lists it on the modem.
 pub async fn new_bearer(conn: &Connection, server: &ObjectServer, ofono_path: &str, contexts: &Contexts, req: Request) -> Result<OwnedObjectPath> {
-    let listed: Vec<(OwnedObjectPath, Props)> = conn
-        .call_method(Some(SERVICE), ofono_path, Some(CONNMAN), "GetContexts", &())
-        .await?
-        .body()
-        .deserialize()?;
+    let listed: Vec<(OwnedObjectPath, Props)> = match conn.call_method(Some(SERVICE), ofono_path, Some(CONNMAN), "GetContexts", &()).await {
+        Ok(reply) => reply.body().deserialize()?,
+        // oFono only offers ConnectionManager once the radio is up and packet service exists.
+        Err(zbus::Error::MethodError(name, ..))
+            if name.as_str() == "org.freedesktop.DBus.Error.UnknownMethod"
+                || name.as_str() == "org.freedesktop.DBus.Error.UnknownInterface" =>
+        {
+            return Err(CoreError::WrongState("no packet data service yet".into()));
+        }
+        Err(e) => return Err(e.into()),
+    };
     let listed: Vec<(String, Props)> = listed.into_iter().map(|(p, props)| (p.to_string(), props)).collect();
     let context = match bearer::choose_context(&req, &listed) {
         Some(c) => c.to_owned(),
@@ -274,6 +311,7 @@ impl Simple {
     ) -> Result<OwnedObjectPath> {
         crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
         let req = Request::from_dict(&properties);
+        bring_up(conn, server, em.path()).await?;
         let modem = server.interface::<_, Modem>(em.path()).await?;
         let existing = modem.get().await.bearers.clone();
         let mut found = None;

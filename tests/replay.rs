@@ -539,3 +539,23 @@ async fn unauthorized_callers_are_refused() {
     assert_eq!(checks.len(), 3);
     assert!(checks.iter().all(|(who, _)| *who == me), "{checks:?}");
 }
+
+/// Simple.Connect on a disabled modem enables it and waits for registration,
+/// as ModemManager does; NetworkManager relies on that.
+#[tokio::test]
+async fn simple_connect_enables_a_disabled_modem() {
+    use mm::{MMBearerIpFamily as family, MMModemState as state};
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem_path) = registered(&bus, &ofono).await;
+    ofono.add_context("/ril_0", "internet", "ctnet").await;
+
+    ofono.set("/ril_0", "org.ofono.Modem", vec![("Online", false.into())]).await;
+    settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_DISABLED)).await;
+
+    let props = HashMap::from([("apn", Variant::from("ctnet")), ("ip-type", Variant::from(family::MM_BEARER_IP_FAMILY_IPV4V6))]);
+    let bearer: OwnedObjectPath = call(&client, &modem_path, SIMPLE, "Connect", &(props,)).await.unwrap();
+    assert!(prop::<bool>(&get_all(&client, bearer.as_str(), BEARER).await.unwrap(), "Connected"));
+    assert_eq!(ofono.modem_bool("/ril_0", "Online").await, Some(true), "Connect turned the radio on");
+}

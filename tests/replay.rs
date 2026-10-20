@@ -554,6 +554,34 @@ async fn unauthorized_callers_are_refused() {
 
 /// Simple.Connect on a disabled modem enables it and waits for registration,
 /// as ModemManager does; NetworkManager relies on that.
+/// MM's per-bearer allow-roaming goes to oFono's RoamingAllowed, and
+/// oFono's refusal comes back as ModemManager's own roaming error.
+#[tokio::test]
+async fn data_roaming_follows_allow_roaming() {
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem) = registered(&bus, &ofono).await; // CT, roaming on KDDI
+    ofono.add_context("/ril_0", "internet", "ctnet").await;
+    let connect = |allow: bool| {
+        let props = HashMap::from([("apn", Variant::from("ctnet")), ("allow-roaming", Variant::from(allow))]);
+        let (client, modem) = (client.clone(), modem.clone());
+        async move { call::<OwnedObjectPath>(&client, &modem, SIMPLE, "Connect", &(props,)).await }
+    };
+
+    match connect(false).await {
+        Err(zbus::Error::MethodError(name, Some(text), _)) => {
+            assert_eq!(name.as_str(), "org.freedesktop.ModemManager1.Error.Core.Unauthorized");
+            assert!(text.contains("roaming not allowed"), "{text}");
+        }
+        other => panic!("expected the roaming refusal, got {other:?}"),
+    }
+    assert_eq!(ofono.connman_bool("/ril_0", "RoamingAllowed").await, Some(false));
+
+    let bearer = connect(true).await.unwrap();
+    assert!(prop::<bool>(&get_all(&client, bearer.as_str(), BEARER).await.unwrap(), "Connected"));
+    assert_eq!(ofono.connman_bool("/ril_0", "RoamingAllowed").await, Some(true));
+}
+
 #[tokio::test]
 async fn simple_connect_enables_a_disabled_modem() {
     use mm::{MMBearerIpFamily as family, MMModemState as state};

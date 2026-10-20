@@ -93,22 +93,25 @@ impl Bearer {
         if !matches!(ofono::str(&netreg, "Status"), Some("registered" | "roaming")) {
             return Err(CoreError::WrongState("not registered with a network".into()));
         }
-        if ofono::str(&netreg, "Status") == Some("roaming") {
-            if !self.request.allow_roaming {
-                return Err(CoreError::Failed("roaming and the bearer doesn't allow it".into()));
-            }
-            let connman = ofono::get_properties(conn, &self.ofono_path, CONNMAN).await?;
-            if ofono::bool(&connman, "RoamingAllowed") == Some(false) {
-                ofono::set_property(conn, &self.ofono_path, CONNMAN, "RoamingAllowed", true.into()).await?;
-            }
-        }
+        // MM's per-bearer allow-roaming is oFono's per-SIM RoamingAllowed,
+        // which gates data contexts while roaming (with the oFono fix that
+        // keeps the attach, and so IMS, out of it). oFono enforces it.
+        ofono::set_property(conn, &self.ofono_path, CONNMAN, "RoamingAllowed", self.request.allow_roaming.into()).await?;
         self.make_data_modem(conn).await?;
 
         for (key, value) in self.request.context_settings(&ctx) {
             ofono::set_property(conn, &self.context, CONTEXT, key, value.as_str().into()).await?;
         }
         // oFono replies once the context is up (or failed to come up).
-        ofono::set_property(conn, &self.context, CONTEXT, "Active", true.into()).await?;
+        match ofono::set_property(conn, &self.context, CONTEXT, "Active", true.into()).await {
+            // Activation is only NotAllowed for a data context while roaming.
+            Err(zbus::Error::MethodError(name, ..)) if name.as_str() == "org.ofono.Error.NotAllowed" => {
+                return Err(CoreError::Unauthorized(
+                    "Not allowed to connect bearer in 3GPP network: 'Registered in roaming network, and roaming not allowed'".into(),
+                ));
+            }
+            r => r?,
+        }
         // Clients read Interface/Ip*Config right after Connect returns.
         self.reload(conn, em).await
     }
@@ -314,7 +317,7 @@ pub struct Simple {
 
 #[interface(name = "org.freedesktop.ModemManager1.Modem.Simple")]
 impl Simple {
-    /// Reuse the modem's bearer for the same APN and type, or create one,
+    /// Reuse the modem's bearer with the same properties, or create one,
     /// and connect it.
     async fn connect(
         &self, #[zbus(header)] header: zbus::message::Header<'_>,
@@ -332,7 +335,9 @@ impl Simple {
         for path in existing {
             let b = server.interface::<_, Bearer>(&path).await?;
             let b = b.get().await;
-            if b.request.apn == req.apn && b.request.context_type() == req.context_type() {
+            // Like MM (mm_bearer_properties_cmp): only a bearer with the same
+            // properties is reused, allow-roaming included.
+            if b.request == req {
                 found = Some(path);
                 break;
             }

@@ -206,8 +206,18 @@ fn ov<'a>(v: impl Into<Variant<'a>>) -> OwnedVariant {
     OwnedVariant::try_from(v.into()).unwrap()
 }
 
+/// oFono's own errors, for what the fakes refuse.
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.ofono.Error")]
+pub enum OfonoError {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    NotAllowed(String),
+}
+
 /// A connection context that comes up like ofono-binder's: rmnet interface,
-/// static /30 IPv4 and a /64 IPv6 address.
+/// static /30 IPv4 and a /64 IPv6 address. Like the patched oFono, a
+/// non-IMS context won't come up while roaming with RoamingAllowed off.
 pub struct ConnectionContext {
     pub props: Props,
 }
@@ -233,10 +243,30 @@ impl ConnectionContext {
         copy(&self.props)
     }
 
-    async fn set_property(&mut self, #[zbus(signal_emitter)] em: SignalEmitter<'_>, name: String, value: OwnedVariant) -> zbus::fdo::Result<()> {
+    async fn set_property(
+        &mut self,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+        name: String,
+        value: OwnedVariant,
+    ) -> Result<(), OfonoError> {
         let mut changes = vec![(name.clone(), value.try_clone().map_err(zbus::Error::from)?)];
         if name == "Active" {
             let up = bool::try_from(value.try_clone().map_err(zbus::Error::from)?).unwrap_or(false);
+            if up && self.props.get("Type").and_then(|v| String::try_from(v.try_clone().ok()?).ok()).as_deref() != Some("ims") {
+                let modem = em.path().as_str().rsplit_once('/').unwrap().0.to_owned();
+                let status = match server.interface::<_, NetworkRegistration>(modem.as_str()).await {
+                    Ok(n) => n.get().await.props.get("Status").and_then(|v| String::try_from(v.try_clone().ok()?).ok()),
+                    Err(_) => None,
+                };
+                let allowed = match server.interface::<_, ConnectionManager>(modem.as_str()).await {
+                    Ok(c) => c.get().await.props.get("RoamingAllowed").and_then(|v| bool::try_from(v.try_clone().ok()?).ok()),
+                    Err(_) => None,
+                };
+                if status.as_deref() == Some("roaming") && allowed != Some(true) {
+                    return Err(OfonoError::NotAllowed("Operation is not allowed".into()));
+                }
+            }
             let (v4, v6): (HashMap<String, Variant>, HashMap<String, Variant>) = if up {
                 (
                     HashMap::from([
@@ -808,6 +838,12 @@ impl FakeOfono {
     /// A boolean property of the oFono Modem interface at `path`.
     pub async fn modem_bool(&self, path: &str, key: &str) -> Option<bool> {
         let m = self.conn.object_server().interface::<_, OfonoModem>(path).await.ok()?;
+        let v = m.get().await.props.get(key)?.try_clone().ok()?;
+        bool::try_from(v).ok()
+    }
+
+    pub async fn connman_bool(&self, path: &str, key: &str) -> Option<bool> {
+        let m = self.conn.object_server().interface::<_, ConnectionManager>(path).await.ok()?;
         let v = m.get().await.props.get(key)?.try_clone().ok()?;
         bool::try_from(v).ok()
     }

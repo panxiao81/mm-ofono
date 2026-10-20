@@ -434,8 +434,13 @@ pub struct SimStatus {
     pub emergency_numbers: Vec<String>,
 }
 
+/// The SIM as MM shows it, once its ICCID is known: like MM, which exports a
+/// SIM only after loading its identifiers. NetworkManager reads the SIM once,
+/// when Modem.Sim changes, and matches profiles' gsm.sim-id against it; a SIM
+/// shown before oFono read the ICCID (as after an oFono restart) left every
+/// profile usable on every modem.
 pub fn sim(m: &OfonoModem) -> Option<SimStatus> {
-    if !m.sim_present() {
+    if !m.sim_present() || m.str(SIM_MANAGER, "CardIdentifier").unwrap_or_default().is_empty() {
         return None;
     }
     let s = |k| m.str(SIM_MANAGER, k).unwrap_or_default().to_owned();
@@ -659,10 +664,12 @@ mod tests {
     }
 
     #[test]
-    fn sim_only_when_present() {
+    fn sim_only_when_present_and_identified() {
         assert_eq!(sim(&modem(&[(SIM_MANAGER, "Present", false.into())])), None);
+        assert_eq!(sim(&modem(&[(SIM_MANAGER, "Present", true.into())])), None, "ICCID not read yet");
         let s = sim(&modem(&[
             (SIM_MANAGER, "Present", true.into()),
+            (SIM_MANAGER, "CardIdentifier", "89860312345678901234".into()),
             (SIM_MANAGER, "MobileCountryCode", "460".into()),
             (SIM_MANAGER, "MobileNetworkCode", "11".into()),
             (VOICE, "EmergencyNumbers", strs(&["112", "110"])),

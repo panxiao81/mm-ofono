@@ -80,6 +80,12 @@ pub enum Event {
 
 /// Start the task for the oFono modem at `path`, announced with `props`.
 /// Send [`Event::Removed`] to stop it; it then unexports its objects.
+/// When to say what a modem that is still not shown waits for.
+const UNREADY_LOG_AFTER: Duration = Duration::from_secs(30);
+
+/// How long a modem that would be shown FAILED waits for oFono to settle.
+const FAILED_SETTLE: Duration = Duration::from_secs(3);
+
 /// How long a ready modem waits for lower SIM slots to be announced first.
 const SLOT_ORDER_WAIT: Duration = Duration::from_secs(15);
 
@@ -131,6 +137,10 @@ pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<SlotOrder>
         ofono: OfonoModem::default(),
         events: tx.clone(),
         modem: None,
+        index: None,
+        exported_failed: false,
+        started: Instant::now(),
+        unready_logged: false,
         sim: None,
         device: None,
         pending_sms: vec![],
@@ -160,6 +170,12 @@ struct Task {
     /// For GetProperties replies to come back through the same queue.
     events: mpsc::UnboundedSender<Event>,
     modem: Option<OwnedObjectPath>,
+    /// The modem object's index, kept across reprobes.
+    index: Option<u32>,
+    /// Whether the exported object is FAILED (see [`Task::try_sync`]).
+    exported_failed: bool,
+    started: Instant,
+    unready_logged: bool,
     sim: Option<OwnedObjectPath>,
     device: Option<PhysicalDevice>,
     /// Messages that arrived before the modem was exported.
@@ -215,7 +231,7 @@ impl Task {
                 // A lower slot was announced (or went away): maybe our turn.
                 Ok(()) = self.order_changes.changed() => {}
                 // Waiting for our turn: re-check, so the wait can time out.
-                _ = tokio::time::sleep(Duration::from_secs(1)), if self.ready_since.is_some() && self.modem.is_none() => {}
+                _ = tokio::time::sleep(Duration::from_secs(1)), if self.modem.is_none() && (self.ready_since.is_some() || !self.unready_logged) => {}
                 else => break,
             }
             self.sync().await;
@@ -465,18 +481,35 @@ impl Task {
     }
 
     async fn try_sync(&mut self) -> zbus::Result<()> {
-        // Wait for a consistent first picture before showing the modem. Once
-        // shown, it stays for as long as oFono has it: a SIM change makes it
-        // fail and recover rather than vanish and come back as another modem.
+        // Wait for a consistent first picture before showing the modem.
         if self.modem.is_none() && !self.ofono.ready() {
+            if !self.unready_logged && self.started.elapsed() > UNREADY_LOG_AFTER {
+                self.unready_logged = true;
+                info!("{}: not shown yet, waiting for {}", self.path, self.ofono.not_ready());
+            }
             return Ok(());
         }
+        let failed = derive::status(&self.ofono).state == state::MM_MODEM_STATE_FAILED;
+        // Like ModemManager, which reprobes on a SIM event: a modem object
+        // never leaves FAILED or enters it in place, it is removed and
+        // exported anew. NetworkManager relies on that: it enables a modem
+        // when the device appears (or the radio is switched on) and skips a
+        // FAILED one, and doesn't retry when the state changes later.
+        if self.modem.is_some() && failed != self.exported_failed {
+            info!("{}: SIM {}, reprobing", self.path, if failed { "gone" } else { "available" });
+            self.unexport().await?;
+        }
         if self.modem.is_none() {
+            let waited = self.ready_since.get_or_insert_with(Instant::now).elapsed();
             if let Some(slot) = self.slot {
-                let waited = self.ready_since.get_or_insert_with(Instant::now).elapsed();
                 if !self.order.may_announce(slot) && waited < SLOT_ORDER_WAIT {
                     return Ok(());
                 }
+            }
+            // oFono reports the card missing for a moment at boot; MM's own
+            // probing takes seconds, so wait before showing a FAILED modem.
+            if failed && waited < FAILED_SETTLE {
+                return Ok(());
             }
         }
         if self.device.is_none() {
@@ -511,7 +544,12 @@ impl Task {
         let channels = mm_cell_broadcast::parse_topics(self.ofono.props(CBS).and_then(|p| ofono::str(p, "Topics")).unwrap_or_default());
         match &self.modem {
             None => {
-                let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{}", modem_index(&self.path)))?;
+                // A reprobe keeps the index: clients number SIMs by modem,
+                // and SIM 1 has to stay the first slot (MM itself would
+                // count on).
+                let index = *self.index.get_or_insert_with(|| modem_index(&self.path));
+                let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{index}"))?;
+                self.exported_failed = failed;
                 info!("{}: exporting {path} (state {})", self.path, status.state);
                 let ofono_path = self.path.clone();
                 let contexts = self.contexts.clone();

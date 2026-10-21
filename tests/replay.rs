@@ -75,7 +75,7 @@ async fn start_bridge(bus: &Bus) -> (Connection, tokio::task::JoinHandle<Seen>) 
     let watcher = tokio::spawn(async move {
         let mut problems = vec![];
         let mut announced = vec![];
-        while let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_secs(3), added.next()).await {
+        while let Ok(Some(Ok(msg))) = tokio::time::timeout(Duration::from_secs(5), added.next()).await {
             let (obj, ifaces): (OwnedObjectPath, HashMap<String, HashMap<String, OwnedVariant>>) =
                 msg.body().deserialize().unwrap();
             announced.push(prop::<String>(&ifaces[MODEM], "PrimaryPort"));
@@ -91,7 +91,7 @@ async fn start_bridge(bus: &Bus) -> (Connection, tokio::task::JoinHandle<Seen>) 
 
 /// Poll until `ready` holds for the exported objects.
 async fn settle(client: &Connection, ready: impl Fn(&Objects) -> bool) -> Objects {
-    for _ in 0..100 {
+    for _ in 0..200 {
         let objects = managed_objects(client).await;
         if ready(&objects) {
             return objects;
@@ -111,8 +111,10 @@ async fn ct_sim_ofono_restart() {
 
     ofono.replay(&trace("ct-ofono-restart"), async || tokio::time::sleep(Duration::from_millis(2)).await).await;
 
+    // The empty slot shows up FAILED only after the settle wait.
     let objects = settle(&client, |o| {
         modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == mm::MMModemState::MM_MODEM_STATE_REGISTERED)
+            && modem(o, "ril_1").is_some()
     })
     .await;
 
@@ -481,12 +483,19 @@ async fn voice_incoming_call() {
 /// Pulling and reinserting the SIM keeps the same modem object (clients
 /// number SIMs by modem), which goes failed and recovers.
 #[tokio::test]
-async fn sim_swap_keeps_the_modem() {
+async fn sim_swap_reprobes_the_modem() {
     use mm::{MMModemState as state, MMModemStateFailedReason as failed};
 
     let bus = Bus::start();
     let ofono = FakeOfono::start(&bus).await;
     let (client, modem_path) = registered(&bus, &ofono).await;
+    let rule = MatchRule::builder().msg_type(Type::Signal).interface("org.freedesktop.DBus.ObjectManager").member("InterfacesRemoved").build().unwrap();
+    let mut removed = MessageStream::for_match_rule(rule, &client, None).await.unwrap();
+    let mut reprobed = async || {
+        let msg = tokio::time::timeout(Duration::from_secs(3), removed.next()).await.expect("modem not removed").unwrap().unwrap();
+        let (obj, _): (OwnedObjectPath, Vec<String>) = msg.body().deserialize().unwrap();
+        assert_eq!(obj.as_str(), modem_path);
+    };
     let full: Vec<String> = [
         "org.ofono.VoiceCallManager", "org.ofono.SimManager", "org.ofono.NetworkRegistration",
         "org.ofono.RadioSettings", "org.ofono.ConnectionManager",
@@ -499,8 +508,9 @@ async fn sim_swap_keeps_the_modem() {
     ofono.set("/ril_0", "org.ofono.SimManager", vec![("Present", false.into())]).await;
     ofono.set("/ril_0", "org.ofono.Modem", vec![("Interfaces", sim_only.into())]).await;
     let objects = settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_FAILED)).await;
+    reprobed().await;
     let (obj, m) = modem(&objects, "ril_0").unwrap();
-    assert_eq!(obj.as_str(), modem_path, "same modem object");
+    assert_eq!(obj.as_str(), modem_path, "a reprobe keeps the slot's index");
     assert_eq!(prop::<u32>(m, "StateFailedReason"), failed::MM_MODEM_STATE_FAILED_REASON_SIM_MISSING);
     assert_eq!(path(m, "Sim"), "/");
 
@@ -508,8 +518,9 @@ async fn sim_swap_keeps_the_modem() {
     ofono.set("/ril_0", "org.ofono.SimManager", vec![("Present", true.into())]).await;
     ofono.set("/ril_0", "org.ofono.Modem", vec![("Interfaces", full.into())]).await;
     let objects = settle(&client, |o| modem(o, "ril_0").is_some_and(|(_, m)| prop::<i32>(m, "State") == state::MM_MODEM_STATE_REGISTERED)).await;
+    reprobed().await;
     let (obj, m) = modem(&objects, "ril_0").unwrap();
-    assert_eq!(obj.as_str(), modem_path, "still the same modem object");
+    assert_eq!(obj.as_str(), modem_path);
     assert_ne!(path(m, "Sim"), "/");
 }
 

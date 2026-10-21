@@ -64,6 +64,18 @@ impl OfonoModem {
             && self.ifaces.values().all(|i| i.fetched)
     }
 
+    /// What [`OfonoModem::ready`] still waits for, for the log.
+    pub fn not_ready(&self) -> String {
+        let mut missing: Vec<String> = self.ifaces.iter().filter(|(_, i)| !i.fetched).map(|(n, _)| n.clone()).collect();
+        if self.bool(MODEM, "Powered").is_none() {
+            missing.push("Modem.Powered".into());
+        }
+        if self.bool(SIM_MANAGER, "Present").is_none() {
+            missing.push("SimManager.Present".into());
+        }
+        missing.join(", ")
+    }
+
     pub fn sim_present(&self) -> bool {
         self.bool(SIM_MANAGER, "Present") == Some(true)
     }

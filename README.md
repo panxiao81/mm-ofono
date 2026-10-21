@@ -10,6 +10,26 @@ by oFono + ofono-binder. Replaces the Python `ofono2mm`.
 Every exported interface is checked against ModemManager's own introspection
 XML (`tests/conformance.rs`).
 
+## Semantics
+
+mm-ofono translates and keeps no state or policy of its own: where oFono
+or NetworkManager has the wrong semantics, the fix belongs there. It
+follows real ModemManager's behaviour, not ofono2mm's; for example a SIM
+event removes and re-exports the modem as MM's reprobe does, because
+NetworkManager relies on it.
+
+The one deliberate extension: **each SIM slot is its own modem.**
+ModemManager has no way to use two SIMs at once (one modem, `SimSlots`,
+only the primary SIM active), while a DSDS phone keeps both lines
+registered for calls, SMS and IMS. mm-ofono exports every oFono modem
+(`/ril_0`, `/ril_1`, ...) as a separate ModemManager modem, Modem/0 for
+slot 1 and so on, kept across reprobes, so clients list SIMs in slot
+order. `SimSlots` stays empty and `SetPrimarySimSlot` unsupported.
+
+Not available because oFono has no equivalent: bands, capabilities,
+reset, AT commands, SMS storage, preferred networks, GPS, Firmware, OMA,
+SAR, CDMA, Inhibit.
+
 ## Development
 
 Builds and tests run in a container matching the Droidian build image:

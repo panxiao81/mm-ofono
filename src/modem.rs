@@ -423,6 +423,11 @@ impl Task {
         if iface == NETREG {
             self.fetch_serving_cell();
         }
+        // Changes to Interfaces between ModemAdded and our subscription
+        // only show up here; on an empty slot no later signal would.
+        if iface == MODEM {
+            self.interfaces_changed();
+        }
     }
 
     /// Track interfaces oFono adds, forget the ones it drops.

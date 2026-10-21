@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use mm_ofono::{manager::Manager, mm_3gpp::Modem3gpp, mm_bearer::{Bearer, Simple}, mm_messaging::Messaging, mm_modem::Modem, mm_signal::ModemSignal, mm_sim::Sim, mm_sms::Sms, mm_ussd::Ussd, mm_voice::Voice, mm_call::Call};
+use mm_ofono::{manager::Manager, mm_3gpp::Modem3gpp, mm_bearer::{Bearer, Simple}, mm_messaging::Messaging, mm_modem::Modem, mm_signal::ModemSignal, mm_sim::Sim, mm_sms::Sms, mm_ussd::Ussd, mm_voice::Voice, mm_call::Call, mm_cell_broadcast::{Cbm, CellBroadcast}};
 use zbus::object_server::Interface;
 use zbus_xml::{Arg, ArgDirection, Node};
 
@@ -123,4 +123,14 @@ fn voice() {
 #[test]
 fn call() {
     assert_conforms(&Call::default());
+}
+
+#[test]
+fn cell_broadcast() {
+    assert_conforms(&CellBroadcast::default());
+}
+
+#[test]
+fn cbm() {
+    assert_conforms(&Cbm { data: Default::default() });
 }

@@ -101,6 +101,7 @@ bag!(OfonoModem, "org.ofono.Modem");
 bag!(SimManager, "org.ofono.SimManager");
 bag!(NetworkRegistration, "org.ofono.NetworkRegistration");
 bag!(RadioSettings, "org.ofono.RadioSettings");
+bag!(CellBroadcast, "org.ofono.CellBroadcast");
 
 bag!(Message, "org.ofono.Message");
 
@@ -688,7 +689,7 @@ impl FakeOfono {
                 }
             };
         }
-        dispatch!(OfonoModem, SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager, SupplementaryServices);
+        dispatch!(OfonoModem, SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager, SupplementaryServices, CellBroadcast);
     }
 
     /// Plays `events` in order. An interface that appears gets the props of
@@ -743,7 +744,7 @@ impl FakeOfono {
             let server = self.conn.object_server();
             let n = iface;
             macro_rules! has { ($($ty:ident),*) => { false $(|| (n == <$ty as Interface>::name().as_str() && server.interface::<_, $ty>(path).await.is_ok()))* } }
-            has!(SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager, SupplementaryServices)
+            has!(SimManager, NetworkRegistration, RadioSettings, VoiceCallManager, ConnectionManager, SupplementaryServices, CellBroadcast)
         };
         if !exists {
             self.update(path, iface, initial, false).await;
@@ -850,6 +851,18 @@ impl FakeOfono {
 
     pub async fn polkit(&self) -> zbus::object_server::InterfaceRef<Polkit> {
         self.conn.object_server().interface::<_, Polkit>("/org/freedesktop/PolicyKit1/Authority").await.unwrap()
+    }
+
+    /// oFono's CellBroadcast.Topics on `modem`.
+    pub async fn cb_topics(&self, modem: &str) -> String {
+        let cb = self.conn.object_server().interface::<_, CellBroadcast>(modem).await.unwrap();
+        let v = cb.get_mut().await.props().get("Topics").unwrap().try_clone().unwrap();
+        String::try_from(v).unwrap()
+    }
+
+    /// A CellBroadcast signal from `conn` (oFono's own connection, or an impostor).
+    pub async fn broadcast<B: serde::Serialize + zbus::DynamicType>(conn: &Connection, modem: &str, member: &str, body: &B) {
+        conn.emit_signal(None::<&str>, modem, "org.ofono.CellBroadcast", member, body).await.unwrap();
     }
 
     pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {

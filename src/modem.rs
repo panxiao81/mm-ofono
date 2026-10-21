@@ -21,6 +21,7 @@ use crate::device::{self, PhysicalDevice};
 use crate::bearer::{CONTEXT, Contexts};
 use crate::mm::{MMCallDirection, MMModemState as state, MMModemStateChangeReason as reason};
 use crate::mm_bearer::{Bearer, Simple};
+use crate::mm_cell_broadcast::{self, CBS, CbmData, CellBroadcast};
 use crate::mm_3gpp::Modem3gpp;
 use crate::mm_messaging::{self, Messaging};
 use crate::mm_modem::Modem;
@@ -36,7 +37,7 @@ use crate::ofono::{self, MODEM, Props, Signal};
 use crate::{MM_PATH, objects};
 
 /// oFono interfaces whose properties feed the ModemManager objects.
-const TRACKED: [&str; 6] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN, SUPPLEMENTARY];
+const TRACKED: [&str; 7] = [SIM_MANAGER, NETREG, RADIO, VOICE, CONNMAN, SUPPLEMENTARY, CBS];
 
 // ModemManager never reuses object indexes.
 static NEXT_SIM: AtomicU32 = AtomicU32::new(0);
@@ -133,6 +134,7 @@ pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<SlotOrder>
         sim: None,
         device: None,
         pending_sms: vec![],
+        pending_cbm: vec![],
         contexts: Contexts::default(),
         cells: HashMap::new(),
         ussd_notification: String::new(),
@@ -161,6 +163,8 @@ struct Task {
     device: Option<PhysicalDevice>,
     /// Messages that arrived before the modem was exported.
     pending_sms: Vec<SmsData>,
+    /// Cell broadcasts that arrived before the modem was exported.
+    pending_cbm: Vec<CbmData>,
     /// oFono connection contexts by path, shared with the bearers.
     contexts: Contexts,
     /// Cells reported by CellInfo while subscribed.
@@ -376,6 +380,7 @@ impl Task {
             }
             Signal::Property { .. } => {}
             Signal::Sms { text, info, immediate } => self.received_sms(text, info, immediate).await,
+            Signal::Broadcast(cbm) => self.received_cbm(cbm).await,
             Signal::CallAdded { path, props } => drop(self.voice_calls.insert(path, props)),
             Signal::DisconnectReason { path, reason } => drop(self.disconnect_reasons.insert(path, reason)),
             Signal::CallRemoved { path } => self.call_removed(&path).await,
@@ -434,6 +439,18 @@ impl Task {
         }
     }
 
+    async fn received_cbm(&mut self, cbm: CbmData) {
+        info!("{}: cell broadcast received on channel {}", self.path, cbm.channel);
+        match &self.modem {
+            Some(path) => {
+                if let Err(e) = mm_cell_broadcast::deliver(&self.conn, path, cbm).await {
+                    warn!("{}: delivering cell broadcast: {e}", self.path);
+                }
+            }
+            None => self.pending_cbm.push(cbm),
+        }
+    }
+
     async fn sync(&mut self) {
         if let Err(e) = self.try_sync().await {
             warn!("{}: {e}", self.path);
@@ -483,6 +500,7 @@ impl Task {
         let status_3gpp = derive::status_3gpp(&self.ofono);
         let status_locked = status.state == state::MM_MODEM_STATE_LOCKED;
         let sim_path = sim.as_ref().and(self.sim.clone());
+        let channels = mm_cell_broadcast::parse_topics(self.ofono.props(CBS).and_then(|p| ofono::str(p, "Topics")).unwrap_or_default());
         match &self.modem {
             None => {
                 let path = OwnedObjectPath::try_from(format!("{MM_PATH}/Modem/{}", modem_index(&self.path)))?;
@@ -498,12 +516,16 @@ impl Task {
                 server.at(&path, ModemSignal { task: Some(self.events.clone()), ..Default::default() }).await?;
                 server.at(&path, Ussd { ofono_path: self.path.clone(), ..Default::default() }).await?;
                 server.at(&path, Voice { ofono_path: self.path.clone(), registry: self.calls.clone(), ..Default::default() }).await?;
+                server.at(&path, CellBroadcast { ofono_path: self.path.clone(), messages: vec![], channels }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
                 if let Some(slot) = self.slot {
                     self.order.set(slot, Some(true));
                 }
                 for sms in std::mem::take(&mut self.pending_sms) {
                     mm_messaging::deliver(&self.conn, &path, sms).await?;
+                }
+                for cbm in std::mem::take(&mut self.pending_cbm) {
+                    mm_cell_broadcast::deliver(&self.conn, &path, cbm).await?;
                 }
                 self.modem = Some(path);
             }
@@ -532,6 +554,8 @@ impl Task {
                 let emergency_only = !self.ofono.sim_present() || status_locked;
                 let iface_voice = server.interface::<_, Voice>(path).await?;
                 objects::update(&self.conn, &iface_voice, |v| v.emergency_only = emergency_only).await?;
+                let iface_cb = server.interface::<_, CellBroadcast>(path).await?;
+                objects::update(&self.conn, &iface_cb, |c| c.channels = channels).await?;
                 let values = signal::values(self.cells.values());
                 let iface_signal = server.interface::<_, ModemSignal>(path).await?;
                 objects::update(&self.conn, &iface_signal, |s| s.values = values).await?;

@@ -7,6 +7,7 @@ pub mod manager;
 pub mod mm;
 pub mod mm_3gpp;
 pub mod mm_bearer;
+pub mod mm_cell_broadcast;
 pub mod mm_call;
 pub mod mm_messaging;
 pub mod mm_modem;
@@ -42,6 +43,7 @@ pub async fn serve(conn: &Connection) -> zbus::Result<()> {
 async fn manager_signals(conn: &Connection, member: &'static str) -> zbus::Result<MessageStream> {
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
+        .sender(ofono::SERVICE)
         .interface("org.ofono.Manager")
         .member(member)
         .path("/")

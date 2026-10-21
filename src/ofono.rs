@@ -94,13 +94,22 @@ pub enum Signal {
     /// Sailfish CellInfo: cells appear while someone is subscribed.
     CellsAdded(Vec<String>),
     CellsRemoved(Vec<String>),
+    /// CellBroadcast.IncomingBroadcast / EmergencyBroadcast.
+    Broadcast(crate::mm_cell_broadcast::CbmData),
 }
 
 /// Every oFono signal on the modem's path and below, in emission order
 /// (one match rule, so interfaces and objects can't overtake each other).
+///
+/// Only from whoever owns org.ofono: the bus applies a well-known sender
+/// name to the current owner, so no other local process can inject an SMS
+/// or an emergency alert. Every oFono match rule needs it, as zbus routes a
+/// message to every stream of the connection whose rule matches locally,
+/// and locally a well-known sender matches anything.
 pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<Item = Signal> + use<>> {
     let rule = MatchRule::builder()
         .msg_type(Type::Signal)
+        .sender(SERVICE)
         .path_namespace(path.to_owned())
         .build()?;
     let stream = MessageStream::for_match_rule(rule, conn, None).await?;
@@ -148,6 +157,18 @@ pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<
                 let paths: Vec<OwnedObjectPath> = msg.body().deserialize().ok()?;
                 let paths = paths.into_iter().map(|p| p.to_string()).collect();
                 Some(if m == "CellsAdded" { Signal::CellsAdded(paths) } else { Signal::CellsRemoved(paths) })
+            }
+            "IncomingBroadcast" => {
+                let (text, topic): (String, u16) = msg.body().deserialize().ok()?;
+                Some(Signal::Broadcast(crate::mm_cell_broadcast::CbmData::text(text, topic)))
+            }
+            "EmergencyBroadcast" => {
+                let (text, info): (String, Props) = msg.body().deserialize().ok()?;
+                let cbm = crate::mm_cell_broadcast::CbmData::emergency(text, &info);
+                if cbm.is_none() {
+                    tracing::warn!("emergency broadcast of unknown type: {info:?}");
+                }
+                Some(Signal::Broadcast(cbm?))
             }
             _ => None,
         }

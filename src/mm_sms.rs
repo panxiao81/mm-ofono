@@ -82,6 +82,7 @@ impl Sms {
         // object) before SendMessage even returns.
         let rule = MatchRule::builder()
             .msg_type(Type::Signal)
+            .sender(SERVICE)
             .path_namespace(self.ofono_path.clone())
             .interface("org.ofono.Message")
             .member("PropertyChanged")

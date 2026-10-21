@@ -601,3 +601,56 @@ async fn simple_connect_enables_a_disabled_modem() {
     assert!(prop::<bool>(&get_all(&client, bearer.as_str(), BEARER).await.unwrap(), "Connected"));
     assert_eq!(ofono.modem_bool("/ril_0", "Online").await, Some(true), "Connect turned the radio on");
 }
+
+const CELL_BROADCAST: &str = "org.freedesktop.ModemManager1.Modem.CellBroadcast";
+const CBM: &str = "org.freedesktop.ModemManager1.Cbm";
+
+#[tokio::test]
+async fn cell_broadcast_round_trip() {
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    ofono.set("/ril_0", "org.ofono.CellBroadcast", vec![("Powered", true.into()), ("Topics", "".into())]).await;
+    let (client, modem) = registered(&bus, &ofono).await;
+
+    let rule = MatchRule::builder().msg_type(Type::Signal).interface(CELL_BROADCAST).member("Added").build().unwrap();
+    let mut added = MessageStream::for_match_rule(rule, &client, None).await.unwrap();
+
+    // Not oFono: dropped by the bus, so it never reaches the list.
+    let impostor = bus.connect().await;
+    let info = HashMap::from([("EmergencyType", Variant::from("Earthquake")), ("EmergencyAlert", true.into()), ("Popup", true.into())]);
+    FakeOfono::broadcast(&impostor, "/ril_0", "EmergencyBroadcast", &("fake", &info)).await;
+
+    // ETWS from oFono: back on its channel, with the alert/popup bits.
+    let info = HashMap::from([("EmergencyType", Variant::from("Tsunami")), ("EmergencyAlert", true.into()), ("Popup", false.into())]);
+    FakeOfono::broadcast(&ofono.conn, "/ril_0", "EmergencyBroadcast", &("津波警報", &info)).await;
+    let msg = tokio::time::timeout(Duration::from_secs(3), added.next()).await.unwrap().unwrap().unwrap();
+    let cbm: OwnedObjectPath = msg.body().deserialize().unwrap();
+    let props = get_all(&client, cbm.as_str(), CBM).await.unwrap();
+    assert_eq!(prop::<String>(&props, "Text"), "津波警報");
+    assert_eq!(prop::<u32>(&props, "Channel"), 4353);
+    assert_eq!(prop::<u32>(&props, "MessageCode"), 1 << 9);
+    assert_eq!(prop::<u32>(&props, "State"), mm::MMCbmState::MM_CBM_STATE_RECEIVED);
+
+    FakeOfono::broadcast(&ofono.conn, "/ril_0", "IncomingBroadcast", &("hello", 4370u16)).await;
+    let msg = tokio::time::timeout(Duration::from_secs(3), added.next()).await.unwrap().unwrap().unwrap();
+    let text: OwnedObjectPath = msg.body().deserialize().unwrap();
+    assert_eq!(prop::<u32>(&get_all(&client, text.as_str(), CBM).await.unwrap(), "Channel"), 4370);
+    let listed: Vec<OwnedObjectPath> = call(&client, &modem, CELL_BROADCAST, "List", &()).await.unwrap();
+    assert_eq!(listed, [cbm.clone(), text], "the impostor's alert must not be listed");
+
+    // SetChannels goes to oFono's Topics, and Channels follows oFono.
+    call::<()>(&client, &modem, CELL_BROADCAST, "SetChannels", &(vec![(4370u32, 4370u32), (4383u32, 4400u32)],)).await.unwrap();
+    assert_eq!(ofono.cb_topics("/ril_0").await, "4370,4383-4400");
+    for _ in 0..100 {
+        let channels: Vec<(u32, u32)> = prop(&get_all(&client, &modem, CELL_BROADCAST).await.unwrap(), "Channels");
+        if channels == [(4370, 4370), (4383, 4400)] {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let channels: Vec<(u32, u32)> = prop(&get_all(&client, &modem, CELL_BROADCAST).await.unwrap(), "Channels");
+    assert_eq!(channels, [(4370, 4370), (4383, 4400)]);
+
+    call::<()>(&client, &modem, CELL_BROADCAST, "Delete", &(cbm.clone(),)).await.unwrap();
+    assert!(get_all(&client, cbm.as_str(), CBM).await.is_err());
+}

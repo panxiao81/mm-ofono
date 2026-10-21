@@ -326,6 +326,8 @@ pub struct Status3gpp {
     pub operator_name: String,
     pub enabled_facility_locks: u32,
     pub packet_service_state: u32,
+    /// Filled in by the modem task, from the shared contexts.
+    pub initial_eps: Option<crate::bearer::AttachSettings>,
 }
 
 pub fn status_3gpp(m: &OfonoModem) -> Status3gpp {
@@ -372,6 +374,7 @@ pub fn status_3gpp(m: &OfonoModem) -> Status3gpp {
             Some(false) => ps::MM_MODEM_3GPP_PACKET_SERVICE_STATE_DETACHED,
             None => ps::MM_MODEM_3GPP_PACKET_SERVICE_STATE_UNKNOWN,
         },
+        initial_eps: None,
     }
 }
 

@@ -654,3 +654,40 @@ async fn cell_broadcast_round_trip() {
     call::<()>(&client, &modem, CELL_BROADCAST, "Delete", &(cbm.clone(),)).await.unwrap();
     assert!(get_all(&client, cbm.as_str(), CBM).await.is_err());
 }
+
+const MODEM_3GPP: &str = "org.freedesktop.ModemManager1.Modem.Modem3gpp";
+
+/// The initial EPS bearer is the internet context ofono-binder attaches with.
+#[tokio::test]
+async fn initial_eps_bearer_is_the_attach_context() {
+    use mm::MMBearerIpFamily as family;
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem) = registered(&bus, &ofono).await;
+    let ctx = ofono.add_context("/ril_0", "internet", "ctnet").await;
+
+    let settings = || {
+        let (client, modem) = (client.clone(), modem.clone());
+        async move {
+            let p = get_all(&client, &modem, MODEM_3GPP).await.unwrap();
+            prop::<HashMap<String, OwnedVariant>>(&p, "InitialEpsBearerSettings")
+        }
+    };
+    let mut s = settings().await;
+    for _ in 0..100 {
+        if s.contains_key("apn") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        s = settings().await;
+    }
+    assert_eq!(prop::<String>(&s, "apn"), "ctnet");
+
+    // Only the given setting changes; the APN stays.
+    let v4 = HashMap::from([("ip-type", Variant::from(family::MM_BEARER_IP_FAMILY_IPV4))]);
+    call::<()>(&client, &modem, MODEM_3GPP, "SetInitialEpsBearerSettings", &(v4,)).await.unwrap();
+    let c = ofono.context(&ctx).await;
+    assert_eq!(ofono::str(&c, "Protocol"), Some("ip"));
+    assert_eq!(ofono::str(&c, "AccessPointName"), Some("ctnet"));
+}

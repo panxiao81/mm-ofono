@@ -126,6 +126,78 @@ pub fn choose_context<'a>(req: &Request, contexts: &'a [(String, Props)]) -> Opt
         .map(|(path, _)| path.as_str())
 }
 
+/// The LTE initial attach settings. ofono-binder sends the first
+/// `internet` context's settings to the modem as the initial attach APN
+/// (and again whenever they change), so that context is the initial EPS
+/// bearer configuration.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AttachSettings {
+    pub apn: String,
+    pub ip_type: u32,
+    pub allowed_auth: u32,
+    pub user: String,
+}
+
+/// The context number oFono gave (".../context3" -> 3); oFono keeps
+/// contexts in creation order, which is the order it searches by type.
+fn context_number(path: &str) -> u32 {
+    path.rsplit("context").next().and_then(|n| n.parse().ok()).unwrap_or(u32::MAX)
+}
+
+/// The context ofono-binder uses for the initial attach.
+pub fn attach_context(contexts: &HashMap<String, Props>) -> Option<(&str, &Props)> {
+    contexts
+        .iter()
+        .filter(|(_, p)| ofono::str(p, "Type") == Some("internet"))
+        .min_by_key(|(path, _)| context_number(path))
+        .map(|(path, p)| (path.as_str(), p))
+}
+
+pub fn attach_settings(ctx: &Props) -> AttachSettings {
+    let s = |k| ofono::str(ctx, k).unwrap_or_default().to_owned();
+    AttachSettings {
+        apn: s("AccessPointName"),
+        ip_type: match ofono::str(ctx, "Protocol") {
+            Some("ip") => family::MM_BEARER_IP_FAMILY_IPV4,
+            Some("ipv6") => family::MM_BEARER_IP_FAMILY_IPV6,
+            Some("dual") => family::MM_BEARER_IP_FAMILY_IPV4V6,
+            _ => family::MM_BEARER_IP_FAMILY_NONE,
+        },
+        allowed_auth: match ofono::str(ctx, "AuthenticationMethod") {
+            Some("none") => auth::MM_BEARER_ALLOWED_AUTH_NONE,
+            Some("pap") => auth::MM_BEARER_ALLOWED_AUTH_PAP,
+            Some("chap") => auth::MM_BEARER_ALLOWED_AUTH_CHAP,
+            _ => auth::MM_BEARER_ALLOWED_AUTH_UNKNOWN,
+        },
+        user: s("Username"),
+    }
+}
+
+impl AttachSettings {
+    /// Modem3gpp.InitialEpsBearerSettings (no password, like MM).
+    pub fn to_dict(&self) -> Dict {
+        let req = Request { apn: self.apn.clone(), ip_type: self.ip_type, allowed_auth: self.allowed_auth, user: self.user.clone(), ..Default::default() };
+        let mut d = req.to_dict();
+        d.remove("allow-roaming");
+        d
+    }
+}
+
+/// SetInitialEpsBearerSettings: the context properties to change. Only
+/// the settings given are touched; as in Simple.Connect, an empty APN
+/// keeps the context's (oFono refuses an empty one).
+pub fn attach_context_settings(settings: &Dict, ctx: &Props) -> Vec<(&'static str, String)> {
+    let req = Request::from_dict(settings);
+    req.context_settings(ctx)
+        .into_iter()
+        .filter(|(k, _)| match *k {
+            "Protocol" => settings.contains_key("ip-type"),
+            "AuthenticationMethod" => settings.contains_key("allowed-auth"),
+            _ => true,
+        })
+        .collect()
+}
+
 /// The bearer's live state, from its context.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Status {
@@ -238,6 +310,29 @@ mod tests {
         assert_eq!(r.context_settings(&c), [("Protocol", "ip".to_owned())]);
         let default_apn = Request { apn: String::new(), ..r.clone() };
         assert_eq!(default_apn.context_settings(&c), [("Protocol", "ip".to_owned())], "empty APN keeps ctnet");
+    }
+
+    #[test]
+    fn attach_context_is_the_first_internet_one() {
+        let contexts = HashMap::from([
+            ("/ril_0/context12".to_owned(), ctx("internet", "second", false)),
+            ("/ril_0/context2".to_owned(), ctx("internet", "ctnet", true)),
+            ("/ril_0/context1".to_owned(), ctx("mms", "ctwap", false)),
+        ]);
+        let (path, p) = attach_context(&contexts).unwrap();
+        assert_eq!(path, "/ril_0/context2");
+        assert_eq!(attach_settings(p).apn, "ctnet");
+    }
+
+    #[test]
+    fn attach_settings_change_only_what_is_given() {
+        let c = props(vec![("AccessPointName", "ctnet".into()), ("Protocol", "dual".into()), ("AuthenticationMethod", "chap".into())]);
+        let s = attach_settings(&c);
+        assert_eq!((s.ip_type, s.allowed_auth), (family::MM_BEARER_IP_FAMILY_IPV4V6, auth::MM_BEARER_ALLOWED_AUTH_CHAP));
+        let apn_only = HashMap::from([("apn".to_owned(), v("ctlte"))]);
+        assert_eq!(attach_context_settings(&apn_only, &c), [("AccessPointName", "ctlte".to_owned())]);
+        let v4 = HashMap::from([("ip-type".to_owned(), v(family::MM_BEARER_IP_FAMILY_IPV4))]);
+        assert_eq!(attach_context_settings(&v4, &c), [("Protocol", "ip".to_owned())]);
     }
 
     #[test]

@@ -5,14 +5,16 @@ use std::collections::HashMap;
 
 use zbus::{Connection, OwnedObjectPath, OwnedVariant, interface};
 
-use crate::derive::{self, NETREG, Status3gpp};
+use crate::bearer::{self, CONTEXT, Contexts};
+use crate::derive::{self, CONNMAN, NETREG, Status3gpp};
 use crate::error::{CoreError, Result};
-use crate::ofono::{Props, SERVICE};
+use crate::ofono::{self, Props, SERVICE};
 
 #[derive(Debug, Default)]
 pub struct Modem3gpp {
     pub ofono_path: String,
     pub status: Status3gpp,
+    pub contexts: Contexts,
 }
 
 fn unsupported<T>(what: &str) -> Result<T> {
@@ -56,9 +58,20 @@ impl Modem3gpp {
         unsupported("SetEpsUeModeOperation")
     }
 
-    async fn set_initial_eps_bearer_settings(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _settings: HashMap<String, OwnedVariant>) -> Result<()> {
+    /// Writes the attach context (see [`bearer::attach_context`]);
+    /// ofono-binder passes it on to the modem. oFono refuses changes while
+    /// the context is active, and so does this.
+    async fn set_initial_eps_bearer_settings(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, settings: HashMap<String, OwnedVariant>) -> Result<()> {
         crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
-        unsupported("SetInitialEpsBearerSettings")
+        let (path, changes) = {
+            let contexts = self.contexts.lock().unwrap();
+            let (path, ctx) = bearer::attach_context(&contexts).ok_or_else(|| CoreError::WrongState("oFono has no internet context".into()))?;
+            (path.to_owned(), bearer::attach_context_settings(&settings, ctx))
+        };
+        for (key, value) in changes {
+            ofono::set_property(conn, &path, CONTEXT, key, value.as_str().into()).await?;
+        }
+        Ok(())
     }
 
     async fn set_nr5g_registration_settings(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _properties: HashMap<String, OwnedVariant>) -> Result<()> {
@@ -76,9 +89,16 @@ impl Modem3gpp {
         unsupported("SetCarrierLock")
     }
 
-    async fn set_packet_service_state(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _state: u32) -> Result<()> {
+    /// oFono attaches while ConnectionManager is Powered.
+    async fn set_packet_service_state(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, state: u32) -> Result<()> {
+        use crate::mm::MMModem3gppPacketServiceState as ps;
         crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
-        unsupported("SetPacketServiceState")
+        let powered = match state {
+            ps::MM_MODEM_3GPP_PACKET_SERVICE_STATE_ATTACHED => true,
+            ps::MM_MODEM_3GPP_PACKET_SERVICE_STATE_DETACHED => false,
+            _ => return Err(CoreError::Failed(format!("invalid packet service state {state}"))),
+        };
+        Ok(ofono::set_property(conn, &self.ofono_path, CONNMAN, "Powered", powered.into()).await?)
     }
 
     #[zbus(property)]
@@ -133,7 +153,7 @@ impl Modem3gpp {
 
     #[zbus(property)]
     async fn initial_eps_bearer_settings(&self) -> HashMap<String, OwnedVariant> {
-        HashMap::new()
+        self.status.initial_eps.as_ref().map(|s| s.to_dict()).unwrap_or_default()
     }
 
     #[zbus(property)]

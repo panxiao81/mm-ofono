@@ -497,7 +497,8 @@ impl Task {
             status.state = state::MM_MODEM_STATE_CONNECTED;
         }
         let identity = derive::identity(&self.ofono, &self.path, self.device.as_ref());
-        let status_3gpp = derive::status_3gpp(&self.ofono);
+        let mut status_3gpp = derive::status_3gpp(&self.ofono);
+        status_3gpp.initial_eps = crate::bearer::attach_context(&self.contexts.lock().unwrap()).map(|(_, c)| crate::bearer::attach_settings(c));
         let status_locked = status.state == state::MM_MODEM_STATE_LOCKED;
         let sim_path = sim.as_ref().and(self.sim.clone());
         let channels = mm_cell_broadcast::parse_topics(self.ofono.props(CBS).and_then(|p| ofono::str(p, "Topics")).unwrap_or_default());
@@ -510,7 +511,7 @@ impl Task {
                 server
                     .at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity, bearers: vec![], contexts: contexts.clone() })
                     .await?;
-                server.at(&path, Modem3gpp { ofono_path: ofono_path.clone(), status: status_3gpp }).await?;
+                server.at(&path, Modem3gpp { ofono_path: ofono_path.clone(), status: status_3gpp, contexts: contexts.clone() }).await?;
                 server.at(&path, Messaging { ofono_path: ofono_path.clone(), messages: vec![] }).await?;
                 server.at(&path, Simple { ofono_path, contexts }).await?;
                 server.at(&path, ModemSignal { task: Some(self.events.clone()), ..Default::default() }).await?;

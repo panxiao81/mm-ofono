@@ -1,0 +1,31 @@
+Source: mm-ofono
+Section: net
+Priority: optional
+Maintainer: panxiao81 <pan-xiao@live.cn>
+Build-Depends: debhelper-compat (= 13),
+               cargo,
+               rustc,
+               pkgconf,
+               libclang-dev,
+               libudev-dev,
+               modemmanager-dev,
+               dbus-daemon <!nocheck>,
+Standards-Version: 4.7.0
+Rules-Requires-Root: no
+Homepage: https://github.com/panxiao81/mm-ofono
+Vcs-Git: https://github.com/panxiao81/mm-ofono.git
+Vcs-Browser: https://github.com/panxiao81/mm-ofono
+
+Package: mm-ofono
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, modemmanager, ofono
+Provides: ofono2mm
+Conflicts: ofono2mm
+Replaces: ofono2mm
+Description: ModemManager D-Bus API on top of oFono
+ Exposes org.freedesktop.ModemManager1 on top of oFono, so ModemManager
+ clients (NetworkManager, Phosh, GNOME Calls, Chatty, GNOME Settings) work
+ on Halium/Droidian devices whose modem is driven by oFono + ofono-binder.
+ .
+ Runs as ModemManager.service in place of ModemManager itself and replaces
+ the Python ofono2mm.

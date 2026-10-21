@@ -1,0 +1,26 @@
+#!/usr/bin/make -f
+
+# ponytail: crates are fetched from crates.io at build time (Cargo.lock pins
+# them); vendor them if the package ever has to build offline.
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	cargo test --release --locked
+endif
+
+override_dh_auto_install:
+	install -Dm755 target/release/mm-ofono debian/mm-ofono/usr/bin/mm-ofono
+	install -Dm644 debian/10-mm-ofono.conf \
+		debian/mm-ofono/usr/lib/systemd/system/ModemManager.service.d/10-mm-ofono.conf
+	install -Dm644 debian/mm-ofono-radio.pkla \
+		debian/mm-ofono/etc/polkit-1/localauthority/10-vendor.d/mm-ofono-radio.pkla
+
+override_dh_auto_clean:
+	rm -rf target debian/cargo-home

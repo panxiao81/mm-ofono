@@ -3,6 +3,8 @@ name = "mm-ofono"
 version = "0.1.0"
 edition = "2024"
 description = "ModemManager D-Bus API on top of oFono"
+license = "GPL-2.0-or-later"
+repository = "https://github.com/panxiao81/mm-ofono"
 
 [dependencies]
 futures-util = "0.3"

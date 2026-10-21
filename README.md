@@ -16,3 +16,15 @@ Builds and tests run in a container matching the Droidian build image:
 
     dev/cargo test
     dev/cargo build --release
+
+## Packages
+
+CI builds an arm64 `.deb` in the Droidian build container on every push to
+`main` and publishes it as a GitHub release. The package replaces `ofono2mm`
+(`Provides`/`Conflicts`/`Replaces`) and runs `/usr/bin/mm-ofono` as
+`ModemManager.service` through a drop-in. Tag `droidian/<version>` to set the
+version.
+
+## License
+
+GPL-2.0-or-later, see `LICENSE`.

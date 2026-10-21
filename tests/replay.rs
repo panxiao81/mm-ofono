@@ -691,3 +691,18 @@ async fn initial_eps_bearer_is_the_attach_context() {
     assert_eq!(ofono::str(&c, "Protocol"), Some("ip"));
     assert_eq!(ofono::str(&c, "AccessPointName"), Some("ctnet"));
 }
+
+#[tokio::test]
+async fn cell_info_subscribes_only_for_the_query() {
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let cell_info = ofono.cell_info("/ril_0").await;
+    let (client, modem) = registered(&bus, &ofono).await;
+
+    let cells: Vec<HashMap<String, OwnedVariant>> = call(&client, &modem, MODEM, "GetCellInfo", &()).await.unwrap();
+    assert_eq!(cells.len(), 1);
+    assert_eq!(prop::<u32>(&cells[0], "cell-type"), mm::MMCellType::MM_CELL_TYPE_LTE);
+    assert!(prop::<bool>(&cells[0], "serving"));
+    assert_eq!(prop::<f64>(&cells[0], "rsrp"), -67.0);
+    assert!(!cell_info.get().await.subscribed, "the query's subscription is dropped again");
+}

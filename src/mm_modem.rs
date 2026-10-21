@@ -132,7 +132,16 @@ impl Modem {
 
     async fn get_cell_info(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>) -> Result<Vec<HashMap<String, OwnedVariant>>> {
         crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
-        Err(CoreError::Unsupported("cell info is not implemented yet".into()))
+        let path = header.path().ok_or_else(|| CoreError::Failed("no path".into()))?.to_owned();
+        let signal_rate = || async {
+            let server = conn.object_server();
+            let rate = match server.interface::<_, crate::mm_signal::ModemSignal>(&path).await {
+                Ok(s) => s.get().await.rate,
+                Err(_) => 0,
+            };
+            rate
+        };
+        Ok(crate::signal::query_cells(conn, &self.ofono_path, signal_rate().await > 0).await?)
     }
 
     async fn command(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _cmd: &str, _timeout: u32) -> Result<String> {

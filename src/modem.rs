@@ -137,6 +137,7 @@ pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<SlotOrder>
         pending_cbm: vec![],
         contexts: Contexts::default(),
         cells: HashMap::new(),
+        cells_for_signal: false,
         ussd_notification: String::new(),
         ussd_request: String::new(),
         voice_calls: HashMap::new(),
@@ -169,6 +170,7 @@ struct Task {
     contexts: Contexts,
     /// Cells reported by CellInfo while subscribed.
     cells: HashMap<String, Cell>,
+    cells_for_signal: bool,
     /// The last network-initiated USSD texts (not oFono properties).
     ussd_notification: String,
     ussd_request: String,
@@ -198,7 +200,10 @@ impl Task {
                 Some(event) = rx.recv() => match event {
                     Event::Snapshot(iface, props) => self.snapshot(&iface, props),
                     Event::Contexts(list) => self.contexts.lock().unwrap().extend(list),
-                    Event::CellInfo(on) => self.cell_info(on).await,
+                    Event::CellInfo(on) => {
+                        self.cells_for_signal = on;
+                        self.cell_info(on).await;
+                    }
                     Event::Cell(path, cell) => drop(self.cells.insert(path, cell)),
                     Event::Calls(list) => self.voice_calls.extend(list),
                     Event::ServingCell(props) => {
@@ -386,7 +391,9 @@ impl Task {
             Signal::CallRemoved { path } => self.call_removed(&path).await,
             Signal::UssdNotification(text) => self.ussd_notification = text,
             Signal::UssdRequest(text) => self.ussd_request = text,
-            Signal::CellsAdded(paths) => paths.iter().for_each(|p| self.fetch_cell(p)),
+            // Cells a GetCellInfo call subscribed for aren't Signal's.
+            Signal::CellsAdded(paths) if self.cells_for_signal => paths.iter().for_each(|p| self.fetch_cell(p)),
+            Signal::CellsAdded(_) => {}
             Signal::CellsRemoved(paths) => paths.iter().for_each(|p| drop(self.cells.remove(p))),
             Signal::ContextAdded { path, props } => drop(self.contexts.lock().unwrap().insert(path, props)),
             Signal::ContextRemoved { path } => drop(self.contexts.lock().unwrap().remove(&path)),

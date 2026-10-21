@@ -16,6 +16,7 @@ pub const DEVICE_CONTROL: &str = "org.freedesktop.ModemManager1.Device.Control";
 pub const MESSAGING: &str = "org.freedesktop.ModemManager1.Messaging";
 pub const VOICE: &str = "org.freedesktop.ModemManager1.Voice";
 pub const USSD: &str = "org.freedesktop.ModemManager1.USSD";
+pub const LOCATION: &str = "org.freedesktop.ModemManager1.Location";
 
 /// POLKIT_CHECK_AUTHORIZATION_FLAGS_ALLOW_USER_INTERACTION
 const ALLOW_USER_INTERACTION: u32 = 1;

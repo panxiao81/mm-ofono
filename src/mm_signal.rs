@@ -12,6 +12,15 @@ use crate::error::Result;
 use crate::modem::Event;
 use crate::signal::{Dict, Values};
 
+/// Whether a client has Signal measuring on the modem object at `path`
+/// (the modem task then holds the CellInfo subscription).
+pub async fn subscribed(conn: &zbus::Connection, path: &zbus::ObjectPath<'_>) -> bool {
+    match conn.object_server().interface::<_, ModemSignal>(path).await {
+        Ok(s) => s.get().await.rate > 0,
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct ModemSignal {
     pub rate: u32,

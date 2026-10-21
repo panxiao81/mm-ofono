@@ -96,6 +96,8 @@ pub enum Signal {
     CellsRemoved(Vec<String>),
     /// CellBroadcast.IncomingBroadcast / EmergencyBroadcast.
     Broadcast(crate::mm_cell_broadcast::CbmData),
+    /// NetworkTime.NetworkTimeChanged (NITZ).
+    NetworkTime(Props),
 }
 
 /// Every oFono signal on the modem's path and below, in emission order
@@ -158,6 +160,7 @@ pub async fn signals(conn: &Connection, path: &str) -> zbus::Result<impl Stream<
                 let paths = paths.into_iter().map(|p| p.to_string()).collect();
                 Some(if m == "CellsAdded" { Signal::CellsAdded(paths) } else { Signal::CellsRemoved(paths) })
             }
+            "NetworkTimeChanged" => Some(Signal::NetworkTime(msg.body().deserialize().ok()?)),
             "IncomingBroadcast" => {
                 let (text, topic): (String, u16) = msg.body().deserialize().ok()?;
                 Some(Signal::Broadcast(crate::mm_cell_broadcast::CbmData::text(text, topic)))

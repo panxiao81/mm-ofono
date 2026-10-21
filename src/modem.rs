@@ -22,6 +22,8 @@ use crate::bearer::{CONTEXT, Contexts};
 use crate::mm::{MMCallDirection, MMModemState as state, MMModemStateChangeReason as reason};
 use crate::mm_bearer::{Bearer, Simple};
 use crate::mm_cell_broadcast::{self, CBS, CbmData, CellBroadcast};
+use crate::mm_location::Location;
+use crate::mm_time::{self, NETWORK_TIME, Time};
 use crate::mm_3gpp::Modem3gpp;
 use crate::mm_messaging::{self, Messaging};
 use crate::mm_modem::Modem;
@@ -72,6 +74,8 @@ pub enum Event {
     Contexts(Vec<(String, Props)>),
     /// Signal.Setup asks to subscribe to (true) or drop cell info.
     CellInfo(bool),
+    /// The reply of NetworkTime.GetNetworkTime.
+    NetworkTime(Props),
     Cell(String, Cell),
     Calls(Vec<(String, Props)>),
     ServingCell(Props),
@@ -145,6 +149,7 @@ pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<SlotOrder>
         device: None,
         pending_sms: vec![],
         pending_cbm: vec![],
+        network_time: None,
         contexts: Contexts::default(),
         cells: HashMap::new(),
         cells_for_signal: false,
@@ -182,6 +187,9 @@ struct Task {
     pending_sms: Vec<SmsData>,
     /// Cell broadcasts that arrived before the modem was exported.
     pending_cbm: Vec<CbmData>,
+    /// oFono's last NITZ report; None until read (NetworkTime has no
+    /// GetProperties, so it isn't a tracked interface).
+    network_time: Option<Props>,
     /// oFono connection contexts by path, shared with the bearers.
     contexts: Contexts,
     /// Cells reported by CellInfo while subscribed.
@@ -226,6 +234,7 @@ impl Task {
                         let i = self.ofono.ifaces.entry(NETMON.into()).or_default();
                         (i.props, i.fetched) = (props, true);
                     }
+                    Event::NetworkTime(p) => self.network_time = Some(p),
                     Event::Removed => break,
                 },
                 // A lower slot was announced (or went away): maybe our turn.
@@ -402,6 +411,7 @@ impl Task {
             Signal::Property { .. } => {}
             Signal::Sms { text, info, immediate } => self.received_sms(text, info, immediate).await,
             Signal::Broadcast(cbm) => self.received_cbm(cbm).await,
+            Signal::NetworkTime(p) => self.network_time_changed(p).await,
             Signal::CallAdded { path, props } => drop(self.voice_calls.insert(path, props)),
             Signal::DisconnectReason { path, reason } => drop(self.disconnect_reasons.insert(path, reason)),
             Signal::CallRemoved { path } => self.call_removed(&path).await,
@@ -433,6 +443,14 @@ impl Task {
     /// Track interfaces oFono adds, forget the ones it drops.
     fn interfaces_changed(&mut self) {
         let listed = self.ofono.strings(MODEM, "Interfaces");
+        match (listed.iter().any(|i| i == NETWORK_TIME), self.network_time.is_some()) {
+            (true, false) => {
+                self.network_time = Some(Props::new());
+                self.fetch_network_time();
+            }
+            (false, true) => self.network_time = None,
+            _ => {}
+        }
         for iface in TRACKED {
             let present = listed.iter().any(|i| i == iface);
             if present && !self.ofono.has(iface) {
@@ -465,6 +483,28 @@ impl Task {
             }
             None => self.pending_sms.push(sms),
         }
+    }
+
+    fn fetch_network_time(&self) {
+        let (conn, path, events) = (self.conn.clone(), self.path.clone(), self.events.clone());
+        tokio::spawn(async move {
+            let reply = conn.call_method(Some(ofono::SERVICE), path.as_str(), Some(NETWORK_TIME), "GetNetworkTime", &()).await;
+            match reply.and_then(|r| r.body().deserialize::<Props>()) {
+                Ok(p) => drop(events.send(Event::NetworkTime(p))),
+                Err(e) => warn!("{path}: GetNetworkTime: {e}"),
+            }
+        });
+    }
+
+    async fn network_time_changed(&mut self, p: Props) {
+        if let (Some(modem), Some(now)) = (&self.modem, mm_time::now(&p)) {
+            if let Ok(t) = self.conn.object_server().interface::<_, Time>(modem).await {
+                if let Err(e) = Time::network_time_changed(t.signal_emitter(), &now).await {
+                    warn!("{}: NetworkTimeChanged: {e}", self.path);
+                }
+            }
+        }
+        self.network_time = Some(p);
     }
 
     async fn received_cbm(&mut self, cbm: CbmData) {
@@ -546,6 +586,7 @@ impl Task {
         status_3gpp.initial_eps = crate::bearer::attach_context(&self.contexts.lock().unwrap()).map(|(_, c)| crate::bearer::attach_settings(c));
         let status_locked = status.state == state::MM_MODEM_STATE_LOCKED;
         let sim_path = sim.as_ref().and(self.sim.clone());
+        let zone = self.network_time.as_ref().map(mm_time::zone).unwrap_or_default();
         let channels = mm_cell_broadcast::parse_topics(self.ofono.props(CBS).and_then(|p| ofono::str(p, "Topics")).unwrap_or_default());
         match &self.modem {
             None => {
@@ -568,6 +609,8 @@ impl Task {
                 server.at(&path, Ussd { ofono_path: self.path.clone(), ..Default::default() }).await?;
                 server.at(&path, Voice { ofono_path: self.path.clone(), registry: self.calls.clone(), ..Default::default() }).await?;
                 server.at(&path, CellBroadcast { ofono_path: self.path.clone(), messages: vec![], channels }).await?;
+                server.at(&path, Time { ofono_path: self.path.clone(), zone }).await?;
+                server.at(&path, Location { ofono_path: self.path.clone(), ..Default::default() }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
                 if let Some(slot) = self.slot {
                     self.order.set(slot, Some(true));
@@ -607,6 +650,8 @@ impl Task {
                 objects::update(&self.conn, &iface_voice, |v| v.emergency_only = emergency_only).await?;
                 let iface_cb = server.interface::<_, CellBroadcast>(path).await?;
                 objects::update(&self.conn, &iface_cb, |c| c.channels = channels).await?;
+                let iface_time = server.interface::<_, Time>(path).await?;
+                objects::update(&self.conn, &iface_time, |t| t.zone = zone).await?;
                 let values = signal::values(self.cells.values());
                 let iface_signal = server.interface::<_, ModemSignal>(path).await?;
                 objects::update(&self.conn, &iface_signal, |s| s.values = values).await?;

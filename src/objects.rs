@@ -17,7 +17,7 @@ use zbus::{
     {ObjectPath, OwnedObjectPath, OwnedVariant, Variant},
 };
 
-use crate::{MM_PATH, mm_3gpp::Modem3gpp, mm_bearer::Simple, mm_cell_broadcast::CellBroadcast, mm_messaging::Messaging, mm_modem::Modem, mm_signal::ModemSignal, mm_ussd::Ussd, mm_voice::Voice};
+use crate::{MM_PATH, mm_3gpp::Modem3gpp, mm_bearer::Simple, mm_cell_broadcast::CellBroadcast, mm_location::Location, mm_time::Time, mm_messaging::Messaging, mm_modem::Modem, mm_signal::ModemSignal, mm_ussd::Ussd, mm_voice::Voice};
 
 pub type IfaceProps = HashMap<String, HashMap<String, OwnedVariant>>;
 
@@ -43,6 +43,8 @@ macro_rules! for_modem_interfaces {
         $f::<Ussd>($($arg),*).await?;
         $f::<Voice>($($arg),*).await?;
         $f::<CellBroadcast>($($arg),*).await?;
+        $f::<Time>($($arg),*).await?;
+        $f::<Location>($($arg),*).await?;
     }};
 }
 

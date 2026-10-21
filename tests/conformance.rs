@@ -134,3 +134,13 @@ fn cell_broadcast() {
 fn cbm() {
     assert_conforms(&Cbm { data: Default::default() });
 }
+
+#[test]
+fn time() {
+    assert_conforms(&mm_ofono::mm_time::Time::default());
+}
+
+#[test]
+fn location() {
+    assert_conforms(&mm_ofono::mm_location::Location::default());
+}

@@ -481,6 +481,8 @@ impl Bag for SupplementaryServices {
 pub struct CellInfo {
     pub subscribed: bool,
     pub cells: Vec<OwnedObjectPath>,
+    /// The serving cell's ci when next subscribed (default 0x26F1B0B).
+    pub ci: Option<i32>,
 }
 
 #[interface(name = "org.nemomobile.ofono.CellInfo")]
@@ -490,7 +492,15 @@ impl CellInfo {
             self.subscribed = true;
             let cell = OwnedObjectPath::try_from(format!("{}/cell_0", em.path())).unwrap();
             conn.object_server()
-                .at(&cell, Cell { kind: "lte".into(), registered: true, props: Props::from([("rsrp".to_owned(), ov(67i32)), ("rsrq".to_owned(), ov(9i32)), ("signalStrength".to_owned(), ov(31i32))]) })
+                .at(&cell, Cell { kind: "lte".into(), registered: true, props: Props::from([
+                    ("rsrp".to_owned(), ov(67i32)),
+                    ("rsrq".to_owned(), ov(9i32)),
+                    ("signalStrength".to_owned(), ov(31i32)),
+                    ("mcc".to_owned(), ov(440i32)),
+                    ("mnc".to_owned(), ov(51i32)),
+                    ("tac".to_owned(), ov(0x964Fi32)),
+                    ("ci".to_owned(), ov(self.ci.unwrap_or(0x26F1B0B))),
+                ]) })
                 .await
                 .unwrap();
             self.cells = vec![cell.clone()];

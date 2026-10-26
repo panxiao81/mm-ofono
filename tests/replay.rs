@@ -279,6 +279,45 @@ async fn wap_push_becomes_a_data_sms() {
     assert_eq!(listed, [sms], "the impostor's push must not be listed");
 }
 
+const LOCATION: &str = "org.freedesktop.ModemManager1.Modem.Location";
+
+async fn location(client: &Connection, modem: &str, want: Option<&str>) -> Option<String> {
+    let mut got = None;
+    for _ in 0..100 {
+        let loc: HashMap<u32, OwnedVariant> = prop(&get_all(client, modem, LOCATION).await.unwrap(), "Location");
+        got = loc.get(&mm::MMModemLocationSource::MM_MODEM_LOCATION_SOURCE_3GPP_LAC_CI).map(|v| String::try_from(v.try_clone().unwrap()).unwrap());
+        if got.as_deref() == want {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    got
+}
+
+/// With signal_location the Location property holds the serving cell's
+/// LAC/CI and follows oFono's cell changes; without it, it stays empty.
+#[tokio::test]
+async fn location_signalling_follows_the_serving_cell() {
+    let lac_ci = mm::MMModemLocationSource::MM_MODEM_LOCATION_SOURCE_3GPP_LAC_CI;
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let cell_info = ofono.cell_info("/ril_0").await;
+    let (client, modem) = registered(&bus, &ofono).await;
+    assert_eq!(location(&client, &modem, None).await, None, "nothing without signalling");
+
+    call::<()>(&client, &modem, LOCATION, "Setup", &(lac_ci, true)).await.unwrap();
+    assert!(prop::<bool>(&get_all(&client, &modem, LOCATION).await.unwrap(), "SignalsLocation"));
+    assert_eq!(location(&client, &modem, Some("440,51,0,26F1B0B,964F")).await.as_deref(), Some("440,51,0,26F1B0B,964F"));
+
+    // A handover: oFono's CellId changes, the new cell is read.
+    cell_info.get_mut().await.ci = Some(0x1234);
+    ofono.set("/ril_0", "org.ofono.NetworkRegistration", vec![("CellId", 0x1234u32.into())]).await;
+    assert_eq!(location(&client, &modem, Some("440,51,0,1234,964F")).await.as_deref(), Some("440,51,0,1234,964F"));
+
+    call::<()>(&client, &modem, LOCATION, "Setup", &(lac_ci, false)).await.unwrap();
+    assert_eq!(location(&client, &modem, None).await, None);
+}
+
 const SIMPLE: &str = "org.freedesktop.ModemManager1.Modem.Simple";
 const BEARER: &str = "org.freedesktop.ModemManager1.Bearer";
 

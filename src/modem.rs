@@ -22,7 +22,7 @@ use crate::bearer::{CONTEXT, Contexts};
 use crate::mm::{MMCallDirection, MMModemState as state, MMModemStateChangeReason as reason};
 use crate::mm_bearer::{Bearer, Simple};
 use crate::mm_cell_broadcast::{self, CBS, CbmData, CellBroadcast};
-use crate::mm_location::Location;
+use crate::mm_location::{self, Location};
 use crate::mm_time::{self, NETWORK_TIME, Time};
 use crate::mm_3gpp::Modem3gpp;
 use crate::mm_messaging::{self, Messaging};
@@ -84,6 +84,8 @@ pub enum Event {
     Push(Vec<u8>, Props),
     /// oFono released the PushNotification agent.
     PushReleased,
+    /// Location.Setup turned signalling on: read the location now.
+    LocationRefresh,
     Removed,
 }
 
@@ -266,6 +268,7 @@ impl Task {
                     Event::NetworkTime(p) => self.network_time = Some(p),
                     Event::Push(data, info) => self.received_push(data, info).await,
                     Event::PushReleased => self.push_agent = false,
+                    Event::LocationRefresh => self.refresh_location(),
                     Event::Removed => break,
                 },
                 // Another slot was announced (or went away), or reported the radio
@@ -313,6 +316,26 @@ impl Task {
             match reply.and_then(|r| r.body().deserialize::<Props>()) {
                 Ok(props) => drop(events.send(Event::ServingCell(props))),
                 Err(e) => warn!("{path}: GetServingCellInformation: {e}"),
+            }
+        });
+    }
+
+    /// Re-read the serving cell for a Location that signals; oFono's
+    /// NetworkRegistration has no LTE tracking area code, CellInfo does.
+    fn refresh_location(&self) {
+        let Some(modem) = self.modem.clone() else { return };
+        let (conn, path, subscribed) = (self.conn.clone(), self.path.clone(), self.cells_for_signal);
+        tokio::spawn(async move {
+            let Ok(iface) = conn.object_server().interface::<_, Location>(&modem).await else { return };
+            if !iface.get().await.signalling() {
+                return;
+            }
+            let loc = match crate::signal::query_cells(&conn, &path, subscribed).await {
+                Ok(cells) => mm_location::serving_lac_ci(&cells),
+                Err(e) => return warn!("{path}: reading the serving cell for Location: {e}"),
+            };
+            if let Err(e) = objects::update(&conn, &iface, |l| l.location = loc).await {
+                warn!("{path}: Location: {e}");
             }
         });
     }
@@ -418,7 +441,11 @@ impl Task {
                 let Some(i) = self.ofono.ifaces.get_mut(&iface) else { return };
                 let interfaces = iface == MODEM && key == "Interfaces";
                 let strength = iface == NETREG && key == "Strength";
+                let moved = iface == NETREG && (key == "CellId" || key == "LocationAreaCode");
                 i.change(key, value);
+                if moved {
+                    self.refresh_location();
+                }
                 if interfaces {
                     self.interfaces_changed();
                 }
@@ -669,7 +696,7 @@ impl Task {
                 server.at(&path, Voice { ofono_path: self.path.clone(), registry: self.calls.clone(), ..Default::default() }).await?;
                 server.at(&path, CellBroadcast { ofono_path: self.path.clone(), messages: vec![], channels }).await?;
                 server.at(&path, Time { ofono_path: self.path.clone(), zone }).await?;
-                server.at(&path, Location { ofono_path: self.path.clone(), ..Default::default() }).await?;
+                server.at(&path, Location { ofono_path: self.path.clone(), task: Some(self.events.clone()), ..Default::default() }).await?;
                 objects::announce_modem(&self.conn, &path).await?;
                 if let Some(slot) = self.slot {
                     self.order.set(slot, Some(true));

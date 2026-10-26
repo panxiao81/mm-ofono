@@ -127,7 +127,7 @@ impl Modem {
 
     async fn set_primary_sim_slot(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>, _sim_slot: u32) -> Result<()> {
         crate::auth::check(conn, &header, crate::auth::DEVICE_CONTROL).await?;
-        Err(CoreError::Unsupported("SIM slot switching is not implemented yet".into()))
+        Err(CoreError::Unsupported("each SIM slot is its own modem; there is no slot to switch".into()))
     }
 
     async fn get_cell_info(&self, #[zbus(connection)] conn: &zbus::Connection, #[zbus(header)] header: zbus::message::Header<'_>) -> Result<Vec<HashMap<String, OwnedVariant>>> {

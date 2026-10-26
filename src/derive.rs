@@ -275,7 +275,16 @@ pub fn status_on(m: &OfonoModem, hardware: &[String]) -> ModemStatus {
         },
         unlock_retries: retries,
         access_technologies: if registered {
-            access_technology(m.str(NETREG, "Technology").unwrap_or(""))
+            match access_technology(m.str(NETREG, "Technology").unwrap_or("")) {
+                // ofono-binder reports an LTE registration with EN-DC as "nr"
+                // too. oFono's serving cell is then still the LTE anchor (it
+                // never lists NR cells); on SA there is none. MM says lte|5gnr
+                // for NSA.
+                tech::MM_MODEM_ACCESS_TECHNOLOGY_5GNR if m.str(NETMON, "Technology") == Some("lte") => {
+                    tech::MM_MODEM_ACCESS_TECHNOLOGY_LTE | tech::MM_MODEM_ACCESS_TECHNOLOGY_5GNR
+                }
+                t => t,
+            }
         } else {
             tech::MM_MODEM_ACCESS_TECHNOLOGY_UNKNOWN
         },
@@ -580,6 +589,23 @@ mod tests {
         let s = status(&empty); // no slot knows yet
         assert_eq!(s.capabilities, cap::MM_MODEM_CAPABILITY_GSM_UMTS | cap::MM_MODEM_CAPABILITY_LTE);
         assert_eq!(s.current_modes, (g2 | g3 | g4, g4));
+    }
+
+    #[test]
+    fn nr_is_nsa_while_the_serving_cell_is_lte() {
+        let base = [
+            (MODEM, "Powered", true.into()),
+            (MODEM, "Online", true.into()),
+            (SIM_MANAGER, "Present", true.into()),
+            (SIM_MANAGER, "PinRequired", "none".into()),
+            (NETREG, "Status", "registered".into()),
+            (NETREG, "Technology", "nr".into()),
+        ];
+        let (lte, nr) = (tech::MM_MODEM_ACCESS_TECHNOLOGY_LTE, tech::MM_MODEM_ACCESS_TECHNOLOGY_5GNR);
+        assert_eq!(status(&modem(&base)).access_technologies, nr, "SA: no LTE serving cell");
+        let mut nsa = base.to_vec();
+        nsa.push((NETMON, "Technology", "lte".into()));
+        assert_eq!(status(&modem(&nsa)).access_technologies, lte | nr);
     }
 
     #[test]

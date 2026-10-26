@@ -195,6 +195,18 @@ fn rssi_quality(dbm: i32) -> u32 {
 }
 
 pub fn status(m: &OfonoModem) -> ModemStatus {
+    status_on(m, &[])
+}
+
+/// Technologies assumed when no slot has shown its RadioSettings yet.
+// ponytail: a GSM/LTE phone, so NetworkManager treats it as 3GPP from the start.
+const FALLBACK_TECHNOLOGIES: [&str; 3] = ["gsm", "umts", "lte"];
+
+/// [`status`], where `hardware` is what another SIM slot of the same oFono
+/// reports. RadioSettings only exists while a SIM is in, but capabilities
+/// and modes describe the modem itself (like ModemManager, which reads them
+/// from the hardware), so an empty slot borrows them.
+pub fn status_on(m: &OfonoModem, hardware: &[String]) -> ModemStatus {
     let powered = m.bool(MODEM, "Powered") == Some(true);
     let online = m.bool(MODEM, "Online") == Some(true);
     let pin = m.str(SIM_MANAGER, "PinRequired").unwrap_or("none");
@@ -237,15 +249,14 @@ pub fn status(m: &OfonoModem) -> ModemStatus {
         _ => 0,
     };
 
-    let available = m.strings(RADIO, "AvailableTechnologies");
+    let mut available = m.strings(RADIO, "AvailableTechnologies");
+    if available.is_empty() {
+        available = if hardware.is_empty() { FALLBACK_TECHNOLOGIES.map(String::from).to_vec() } else { hardware.to_vec() };
+    }
     let supported = supported_modes(&available);
-    let capabilities = match RATS.iter().filter(|r| available.contains(&r.0.to_owned())).fold(0, |c, r| c | r.2) {
-        // ponytail: before RadioSettings shows up, assume a GSM/LTE phone so
-        // NetworkManager treats it as 3GPP from the start.
-        0 => cap::MM_MODEM_CAPABILITY_GSM_UMTS | cap::MM_MODEM_CAPABILITY_LTE,
-        c => c,
-    };
-    let current = current_modes(&supported, m.str(RADIO, "TechnologyPreference"));
+    let capabilities = RATS.iter().filter(|r| available.contains(&r.0.to_owned())).fold(0, |c, r| c | r.2);
+    // Without RadioSettings nothing restricts the modes: the widest.
+    let current = current_modes(&supported, Some(m.str(RADIO, "TechnologyPreference").unwrap_or("any")));
 
     ModemStatus {
         state: st,
@@ -547,6 +558,28 @@ mod tests {
         assert_eq!(rated(0), (0, true));
         assert_eq!(rated(99), (35, true), "unknown: oFono's rating");
         assert_eq!(status(&modem(&base)).signal_quality, (35, true), "no NetworkMonitor");
+    }
+
+    /// An empty slot has no RadioSettings; gnome-control-center asserts on
+    /// allowed modes of 0.
+    #[test]
+    fn empty_slot_borrows_the_modems_technologies() {
+        let empty = modem(&[(MODEM, "Powered", true.into()), (SIM_MANAGER, "Present", false.into())]);
+        let (g2, g3, g4, g5) =
+            (mode::MM_MODEM_MODE_2G, mode::MM_MODEM_MODE_3G, mode::MM_MODEM_MODE_4G, mode::MM_MODEM_MODE_5G);
+
+        let s = status_on(&empty, &["gsm", "umts", "lte", "nr"].map(String::from));
+        assert_eq!(s.state, state::MM_MODEM_STATE_FAILED);
+        assert_eq!(
+            s.capabilities,
+            cap::MM_MODEM_CAPABILITY_GSM_UMTS | cap::MM_MODEM_CAPABILITY_LTE | cap::MM_MODEM_CAPABILITY_5GNR
+        );
+        assert_eq!(s.supported_modes.len(), 4);
+        assert_eq!(s.current_modes, (g2 | g3 | g4 | g5, g5));
+
+        let s = status(&empty); // no slot knows yet
+        assert_eq!(s.capabilities, cap::MM_MODEM_CAPABILITY_GSM_UMTS | cap::MM_MODEM_CAPABILITY_LTE);
+        assert_eq!(s.current_modes, (g2 | g3 | g4, g4));
     }
 
     #[test]

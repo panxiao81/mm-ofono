@@ -93,18 +93,39 @@ const FAILED_SETTLE: Duration = Duration::from_secs(3);
 /// How long a ready modem waits for lower SIM slots to be announced first.
 const SLOT_ORDER_WAIT: Duration = Duration::from_secs(15);
 
+/// What the SIM slots of one oFono share; one per [`crate::run`].
+///
 /// Modems are announced in SIM slot order: gnome-control-center numbers
 /// SIMs in the order modems appear, so slot 1 has to come first even when
-/// slot 2 is ready sooner (an empty slot usually is). One per [`crate::run`].
-pub struct SlotOrder {
+/// slot 2 is ready sooner (an empty slot usually is).
+///
+/// The slots are one physical modem, so they also share its radio
+/// technologies, which oFono only reports for a slot with a SIM.
+pub struct Slots {
     /// Slot -> announced, for every modem being followed.
     slots: std::sync::Mutex<std::collections::BTreeMap<u32, bool>>,
+    technologies: std::sync::Mutex<Vec<String>>,
     changed: watch::Sender<()>,
 }
 
-impl SlotOrder {
-    pub fn new() -> Arc<SlotOrder> {
-        Arc::new(SlotOrder { slots: Default::default(), changed: watch::channel(()).0 })
+impl Slots {
+    pub fn new() -> Arc<Slots> {
+        Arc::new(Slots { slots: Default::default(), technologies: Default::default(), changed: watch::channel(()).0 })
+    }
+
+    /// Record a slot's RadioSettings technologies; other slots re-sync when
+    /// they change.
+    fn share_technologies(&self, available: Vec<String>) {
+        let mut t = self.technologies.lock().unwrap();
+        if !available.is_empty() && *t != available {
+            *t = available;
+            drop(t);
+            self.changed.send_replace(());
+        }
+    }
+
+    fn technologies(&self) -> Vec<String> {
+        self.technologies.lock().unwrap().clone()
     }
 
     fn set(&self, slot: u32, announced: Option<bool>) {
@@ -125,7 +146,7 @@ impl SlotOrder {
     }
 }
 
-pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<SlotOrder>) -> mpsc::UnboundedSender<Event> {
+pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<Slots>) -> mpsc::UnboundedSender<Event> {
     let (tx, rx) = mpsc::unbounded_channel();
     let slot = slot_index(&path);
     if let Some(slot) = slot {
@@ -164,7 +185,7 @@ pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<SlotOrder>
 }
 
 struct Task {
-    order: Arc<SlotOrder>,
+    order: Arc<Slots>,
     order_changes: watch::Receiver<()>,
     slot: Option<u32>,
     /// When the modem was first ready to be shown, while it waits its turn.
@@ -237,7 +258,8 @@ impl Task {
                     Event::NetworkTime(p) => self.network_time = Some(p),
                     Event::Removed => break,
                 },
-                // A lower slot was announced (or went away): maybe our turn.
+                // Another slot was announced (or went away), or reported the radio
+                // technologies: maybe our turn, or new capabilities.
                 Ok(()) = self.order_changes.changed() => {}
                 // Waiting for our turn: re-check, so the wait can time out.
                 _ = tokio::time::sleep(Duration::from_secs(1)), if self.modem.is_none() && (self.ready_since.is_some() || !self.unready_logged) => {}
@@ -534,7 +556,9 @@ impl Task {
             }
             return Ok(());
         }
-        let failed = derive::status(&self.ofono).state == state::MM_MODEM_STATE_FAILED;
+        self.order.share_technologies(self.ofono.strings(RADIO, "AvailableTechnologies"));
+        let hardware = self.order.technologies();
+        let failed = derive::status_on(&self.ofono, &hardware).state == state::MM_MODEM_STATE_FAILED;
         // Like ModemManager, which reprobes on a SIM event: a modem object
         // never leaves FAILED or enters it in place, it is removed and
         // exported anew. NetworkManager relies on that: it enables a modem
@@ -577,7 +601,7 @@ impl Task {
             _ => {}
         }
 
-        let mut status = derive::status(&self.ofono);
+        let mut status = derive::status_on(&self.ofono, &hardware);
         if status.state == state::MM_MODEM_STATE_REGISTERED && self.bearer_connected().await {
             status.state = state::MM_MODEM_STATE_CONNECTED;
         }
@@ -720,7 +744,7 @@ mod tests {
 
     #[test]
     fn slots_are_announced_in_order() {
-        let order = SlotOrder::new();
+        let order = Slots::new();
         order.set(1, Some(false));
         assert!(!order.may_announce(1), "slot 1 not even added yet");
         order.set(0, Some(false));

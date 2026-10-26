@@ -559,6 +559,31 @@ impl Polkit {
     }
 }
 
+/// oFono's WAP push agent registration: one agent, as in plugins/push-notification.c.
+#[derive(Default)]
+pub struct PushNotification {
+    /// (bus name, object path) of the registered agent.
+    pub agent: Option<(String, OwnedObjectPath)>,
+}
+
+#[interface(name = "org.ofono.PushNotification")]
+impl PushNotification {
+    fn register_agent(&mut self, #[zbus(header)] header: zbus::message::Header<'_>, path: OwnedObjectPath) -> zbus::fdo::Result<()> {
+        if self.agent.is_some() {
+            return Err(zbus::fdo::Error::Failed("busy".into()));
+        }
+        self.agent = Some((header.sender().unwrap().to_string(), path));
+        Ok(())
+    }
+
+    fn unregister_agent(&mut self, path: OwnedObjectPath) -> zbus::fdo::Result<()> {
+        match &self.agent {
+            Some((_, p)) if *p == path => Ok(self.agent = None),
+            _ => Err(zbus::fdo::Error::Failed("no such agent".into())),
+        }
+    }
+}
+
 /// Sailfish oFono's data SIM selection.
 #[derive(Default)]
 pub struct NemoModemManager {
@@ -656,6 +681,9 @@ impl FakeOfono {
         let conn = bus.connect().await;
         conn.object_server().at("/", Manager::default()).await.unwrap();
         conn.object_server().at("/", NemoModemManager::default()).await.unwrap();
+        for modem in ["/ril_0", "/ril_1"] {
+            conn.object_server().at(modem, PushNotification::default()).await.unwrap();
+        }
         conn.request_name("org.ofono").await.unwrap();
         conn.object_server().at("/org/freedesktop/PolicyKit1/Authority", Polkit::default()).await.unwrap();
         conn.request_name("org.freedesktop.PolicyKit1").await.unwrap();
@@ -863,6 +891,27 @@ impl FakeOfono {
     /// A CellBroadcast signal from `conn` (oFono's own connection, or an impostor).
     pub async fn broadcast<B: serde::Serialize + zbus::DynamicType>(conn: &Connection, modem: &str, member: &str, body: &B) {
         conn.emit_signal(None::<&str>, modem, "org.ofono.CellBroadcast", member, body).await.unwrap();
+    }
+
+    /// The PushNotification agent registered on the modem at `path`, once there is one.
+    pub async fn push_agent(&self, path: &str) -> Option<(String, OwnedObjectPath)> {
+        let server = self.conn.object_server();
+        if server.interface::<_, PushNotification>(path).await.is_err() {
+            server.at(path, PushNotification::default()).await.unwrap();
+        }
+        server.interface::<_, PushNotification>(path).await.unwrap().get().await.agent.clone()
+    }
+
+    /// Deliver a WAP push to the agent from `conn` (oFono's own connection, or an impostor).
+    pub async fn push(conn: &Connection, agent: &(String, OwnedObjectPath), data: &[u8], sender: &str, sent_time: &str) -> zbus::Result<()> {
+        let info = Props::from([
+            ("Sender".to_owned(), OwnedVariant::try_from(Variant::from(sender)).unwrap()),
+            ("SentTime".to_owned(), OwnedVariant::try_from(Variant::from(sent_time)).unwrap()),
+            ("LocalSentTime".to_owned(), OwnedVariant::try_from(Variant::from(sent_time)).unwrap()),
+        ]);
+        conn.call_method(Some(agent.0.as_str()), &agent.1, Some("org.ofono.PushNotificationAgent"), "ReceiveNotification", &(data, info))
+            .await
+            .map(drop)
     }
 
     pub async fn sent_sms(&self, path: &str) -> Vec<(String, String)> {

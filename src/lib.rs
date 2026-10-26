@@ -21,6 +21,7 @@ pub mod mm_voice;
 pub mod modem;
 pub mod objects;
 pub mod ofono;
+pub mod push;
 pub mod signal;
 pub mod voice;
 

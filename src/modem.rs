@@ -26,6 +26,7 @@ use crate::mm_location::Location;
 use crate::mm_time::{self, NETWORK_TIME, Time};
 use crate::mm_3gpp::Modem3gpp;
 use crate::mm_messaging::{self, Messaging};
+use crate::push::{self, PUSH};
 use crate::mm_modem::Modem;
 use crate::mm_signal::ModemSignal;
 use crate::mm_sms::SmsData;
@@ -79,6 +80,10 @@ pub enum Event {
     Cell(String, Cell),
     Calls(Vec<(String, Props)>),
     ServingCell(Props),
+    /// A WAP push the PushNotification agent received.
+    Push(Vec<u8>, Props),
+    /// oFono released the PushNotification agent.
+    PushReleased,
     Removed,
 }
 
@@ -179,6 +184,7 @@ pub fn spawn(conn: Connection, path: String, props: Props, order: Arc<Slots>) ->
         voice_calls: HashMap::new(),
         disconnect_reasons: HashMap::new(),
         calls: Calls::default(),
+        push_agent: false,
     };
     tokio::spawn(task.run(props, rx));
     tx
@@ -223,6 +229,8 @@ struct Task {
     voice_calls: HashMap<String, Props>,
     disconnect_reasons: HashMap<String, String>,
     calls: Calls,
+    /// Our PushNotification agent is registered with oFono.
+    push_agent: bool,
 }
 
 impl Task {
@@ -256,6 +264,8 @@ impl Task {
                         (i.props, i.fetched) = (props, true);
                     }
                     Event::NetworkTime(p) => self.network_time = Some(p),
+                    Event::Push(data, info) => self.received_push(data, info).await,
+                    Event::PushReleased => self.push_agent = false,
                     Event::Removed => break,
                 },
                 // Another slot was announced (or went away), or reported the radio
@@ -270,6 +280,7 @@ impl Task {
         if let Some(slot) = self.slot {
             self.order.set(slot, None);
         }
+        push::unregister(&self.conn, &self.path, self.push_agent).await;
         if let Err(e) = self.unexport().await {
             warn!("{}: unexport: {e}", self.path);
         }
@@ -473,6 +484,22 @@ impl Task {
             (false, true) => self.network_time = None,
             _ => {}
         }
+        match (listed.iter().any(|i| i == PUSH), self.push_agent) {
+            (true, false) => {
+                // Taken as registered right away so it isn't tried twice;
+                // a refusal resets it.
+                self.push_agent = true;
+                let (conn, path, events) = (self.conn.clone(), self.path.clone(), self.events.clone());
+                tokio::spawn(async move {
+                    if !push::register(&conn, &path, events.clone()).await {
+                        drop(events.send(Event::PushReleased));
+                    }
+                });
+            }
+            // oFono drops the agent with the interface.
+            (false, true) => self.push_agent = false,
+            _ => {}
+        }
         for iface in TRACKED {
             let present = listed.iter().any(|i| i == iface);
             if present && !self.ofono.has(iface) {
@@ -494,9 +521,17 @@ impl Task {
     }
 
     async fn received_sms(&mut self, text: String, info: Props, immediate: bool) {
-        let sms = SmsData::received(text, &info, immediate);
         // Like ModemManager, no personal data (numbers, text) in the log.
         info!("{}: SMS received", self.path);
+        self.deliver(SmsData::received(text, &info, immediate)).await;
+    }
+
+    async fn received_push(&mut self, data: Vec<u8>, info: Props) {
+        info!("{}: WAP push received ({} bytes)", self.path, data.len());
+        self.deliver(SmsData::push(data, &info)).await;
+    }
+
+    async fn deliver(&mut self, sms: SmsData) {
         match &self.modem {
             Some(path) => {
                 if let Err(e) = mm_messaging::deliver(&self.conn, path, sms).await {

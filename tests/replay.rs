@@ -239,6 +239,46 @@ async fn sms_round_trip() {
     assert!(!listed.contains(&sms));
 }
 
+/// MMS notifications: oFono gives WAP pushes only to a PushNotification
+/// agent; they come out as an Sms with Data and no Text, as mmsd-tng expects.
+#[tokio::test]
+async fn wap_push_becomes_a_data_sms() {
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem) = registered(&bus, &ofono).await;
+
+    let mut agent = None;
+    for _ in 0..100 {
+        agent = ofono.push_agent("/ril_0").await;
+        if agent.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    let agent = agent.expect("mm-ofono registers a PushNotification agent");
+
+    let rule = MatchRule::builder().msg_type(Type::Signal).interface(MESSAGING).member("Added").build().unwrap();
+    let mut added = MessageStream::for_match_rule(rule, &client, None).await.unwrap();
+
+    // Not oFono: refused, so nothing is listed.
+    let impostor = bus.connect().await;
+    assert!(FakeOfono::push(&impostor, &agent, &[1, 2, 3], "+10000000009", "2026-10-27T01:00:00+0900").await.is_err());
+
+    // WSP push PDU (TID, PDU type 0x06 push, ...): passed through untouched.
+    let pdu = [0x01u8, 0x06, 0x04, 0xbe, 0xaf, 0x84, 0x8c, 0x82];
+    FakeOfono::push(&ofono.conn, &agent, &pdu, "+10000000003", "2026-10-27T01:00:00+0900").await.unwrap();
+    let msg = tokio::time::timeout(Duration::from_secs(3), added.next()).await.unwrap().unwrap().unwrap();
+    let (sms, received): (OwnedObjectPath, bool) = msg.body().deserialize().unwrap();
+    assert!(received);
+    let props = get_all(&client, sms.as_str(), SMS).await.unwrap();
+    assert_eq!(prop::<Vec<u8>>(&props, "Data"), pdu);
+    assert_eq!(prop::<String>(&props, "Text"), "");
+    assert_eq!(prop::<String>(&props, "Number"), "+10000000003");
+    assert_eq!(prop::<u32>(&props, "State"), mm::MMSmsState::MM_SMS_STATE_RECEIVED);
+    let listed: Vec<OwnedObjectPath> = call(&client, &modem, MESSAGING, "List", &()).await.unwrap();
+    assert_eq!(listed, [sms], "the impostor's push must not be listed");
+}
+
 const SIMPLE: &str = "org.freedesktop.ModemManager1.Modem.Simple";
 const BEARER: &str = "org.freedesktop.ModemManager1.Bearer";
 

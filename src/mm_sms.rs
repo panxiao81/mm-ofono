@@ -51,6 +51,11 @@ impl SmsData {
             ..Default::default()
         }
     }
+    /// A WAP push oFono's PushNotification agent got: ModemManager's binary
+    /// SMS, `Data` without text (mmsd-tng tells MMS notifications apart by that).
+    pub fn push(data: Vec<u8>, info: &ofono::Props) -> SmsData {
+        SmsData { data, ..SmsData::received(String::new(), info, false) }
+    }
 }
 
 /// The data sits behind a mutex rather than `&mut self` so a slow Send

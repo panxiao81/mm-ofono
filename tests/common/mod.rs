@@ -190,8 +190,24 @@ impl ConnectionManager {
     #[zbus(signal)]
     async fn property_changed(em: &SignalEmitter<'_>, name: &str, value: &Variant<'_>) -> zbus::Result<()>;
 
+    async fn remove_context(
+        &mut self,
+        #[zbus(object_server)] server: &ObjectServer,
+        #[zbus(signal_emitter)] em: SignalEmitter<'_>,
+        path: OwnedObjectPath,
+    ) -> zbus::fdo::Result<()> {
+        let i = self.contexts.iter().position(|p| *p == path).ok_or_else(|| zbus::fdo::Error::Failed("no such context".into()))?;
+        self.contexts.remove(i);
+        server.remove::<ConnectionContext, _>(&path).await?;
+        Self::context_removed(&em, path.as_ref()).await?;
+        Ok(())
+    }
+
     #[zbus(signal)]
     async fn context_added(em: &SignalEmitter<'_>, path: ObjectPath<'_>, props: &Props) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn context_removed(em: &SignalEmitter<'_>, path: ObjectPath<'_>) -> zbus::Result<()>;
 }
 
 impl Bag for ConnectionManager {

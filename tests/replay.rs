@@ -279,6 +279,67 @@ async fn wap_push_becomes_a_data_sms() {
     assert_eq!(listed, [sms], "the impostor's push must not be listed");
 }
 
+const PROFILES: &str = "org.freedesktop.ModemManager1.Modem.Modem3gpp.ProfileManager";
+
+/// Profiles are oFono contexts: List shows them (the attach one marked
+/// INITIAL), Set updates one by profile-id or adds a context, Delete
+/// removes it.
+#[tokio::test]
+async fn profiles_are_ofono_contexts() {
+    use mm::{MMBearerApnType as apn_type, MMBearerIpFamily as family};
+    type Dict = HashMap<String, OwnedVariant>;
+
+    let bus = Bus::start();
+    let ofono = FakeOfono::start(&bus).await;
+    let (client, modem) = registered(&bus, &ofono).await;
+    let rule = MatchRule::builder().msg_type(Type::Signal).interface(PROFILES).member("Updated").build().unwrap();
+    let mut updated = MessageStream::for_match_rule(rule, &client, None).await.unwrap();
+    let internet = ofono.add_context("/ril_0", "internet", "ctnet").await;
+    tokio::time::timeout(Duration::from_secs(3), updated.next()).await.expect("Updated on a new oFono context");
+
+    assert_eq!(prop::<String>(&get_all(&client, &modem, PROFILES).await.unwrap(), "IndexField"), "profile-id");
+    let list: Vec<Dict> = call(&client, &modem, PROFILES, "List", &()).await.unwrap();
+    assert_eq!(list.len(), 1);
+    assert_eq!(prop::<i32>(&list[0], "profile-id"), 1);
+    assert_eq!(prop::<String>(&list[0], "apn"), "ctnet");
+    assert_eq!(prop::<u32>(&list[0], "apn-type"), apn_type::MM_BEARER_APN_TYPE_DEFAULT | apn_type::MM_BEARER_APN_TYPE_INITIAL);
+
+    // No profile-id: a new context of the requested type.
+    let mms = HashMap::from([("apn", Variant::from("ctwap")), ("apn-type", apn_type::MM_BEARER_APN_TYPE_MMS.into()), ("profile-name", "MMS".into())]);
+    let stored: Dict = call(&client, &modem, PROFILES, "Set", &(mms,)).await.unwrap();
+    let id = prop::<i32>(&stored, "profile-id");
+    assert_eq!(id, 2);
+    assert_eq!(prop::<String>(&stored, "apn"), "ctwap");
+    assert_eq!(prop::<u32>(&stored, "apn-type"), apn_type::MM_BEARER_APN_TYPE_MMS);
+    let c = ofono.context("/ril_0/context2").await;
+    assert_eq!((ofono::str(&c, "Type"), ofono::str(&c, "Name")), (Some("mms"), Some("MMS")));
+
+    // With profile-id: that context changes, nothing else.
+    let v4 = HashMap::from([("profile-id", Variant::from(1i32)), ("ip-type", family::MM_BEARER_IP_FAMILY_IPV4.into())]);
+    call::<Dict>(&client, &modem, PROFILES, "Set", &(v4,)).await.unwrap();
+    let c = ofono.context(&internet).await;
+    assert_eq!((ofono::str(&c, "Protocol"), ofono::str(&c, "AccessPointName")), (Some("ip"), Some("ctnet")));
+
+    // Refused: an unknown profile, a key a context can't hold, Delete without an index.
+    let missing = HashMap::from([("profile-id", Variant::from(9i32)), ("apn", "x".into())]);
+    assert!(call::<Dict>(&client, &modem, PROFILES, "Set", &(missing,)).await.is_err());
+    let odd = HashMap::from([("roaming-allowance", Variant::from(1u32))]);
+    assert!(call::<Dict>(&client, &modem, PROFILES, "Set", &(odd,)).await.is_err());
+    assert!(call::<()>(&client, &modem, PROFILES, "Delete", &(HashMap::<&str, Variant>::new(),)).await.is_err());
+
+    call::<()>(&client, &modem, PROFILES, "Delete", &(HashMap::from([("profile-id", Variant::from(id))]),)).await.unwrap();
+    let mut ids = vec![];
+    for _ in 0..100 {
+        let list: Vec<Dict> = call(&client, &modem, PROFILES, "List", &()).await.unwrap();
+        ids = list.iter().map(|d| prop::<i32>(d, "profile-id")).collect();
+        if ids == [1] {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert_eq!(ids, [1]);
+}
+
 const LOCATION: &str = "org.freedesktop.ModemManager1.Modem.Location";
 
 async fn location(client: &Connection, modem: &str, want: Option<&str>) -> Option<String> {

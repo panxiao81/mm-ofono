@@ -12,6 +12,7 @@ pub mod mm_location;
 pub mod mm_call;
 pub mod mm_messaging;
 pub mod mm_modem;
+pub mod mm_profile_manager;
 pub mod mm_signal;
 pub mod mm_sim;
 pub mod mm_sms;

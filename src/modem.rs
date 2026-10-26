@@ -26,6 +26,7 @@ use crate::mm_location::{self, Location};
 use crate::mm_time::{self, NETWORK_TIME, Time};
 use crate::mm_3gpp::Modem3gpp;
 use crate::mm_messaging::{self, Messaging};
+use crate::mm_profile_manager::ProfileManager;
 use crate::push::{self, PUSH};
 use crate::mm_modem::Modem;
 use crate::mm_signal::ModemSignal;
@@ -320,6 +321,13 @@ impl Task {
         });
     }
 
+    async fn profiles_updated(&self) {
+        let Some(modem) = &self.modem else { return };
+        if let Ok(iface) = self.conn.object_server().interface::<_, ProfileManager>(modem).await {
+            drop(ProfileManager::updated(iface.signal_emitter()).await);
+        }
+    }
+
     /// Re-read the serving cell for a Location that signals; oFono's
     /// NetworkRegistration has no LTE tracking area code, CellInfo does.
     fn refresh_location(&self) {
@@ -481,8 +489,14 @@ impl Task {
             Signal::CellsAdded(paths) if self.cells_for_signal => paths.iter().for_each(|p| self.fetch_cell(p)),
             Signal::CellsAdded(_) => {}
             Signal::CellsRemoved(paths) => paths.iter().for_each(|p| drop(self.cells.remove(p))),
-            Signal::ContextAdded { path, props } => drop(self.contexts.lock().unwrap().insert(path, props)),
-            Signal::ContextRemoved { path } => drop(self.contexts.lock().unwrap().remove(&path)),
+            Signal::ContextAdded { path, props } => {
+                self.contexts.lock().unwrap().insert(path, props);
+                self.profiles_updated().await;
+            }
+            Signal::ContextRemoved { path } => {
+                self.contexts.lock().unwrap().remove(&path);
+                self.profiles_updated().await;
+            }
         }
     }
 
@@ -689,6 +703,7 @@ impl Task {
                     .at(&path, Modem { ofono_path: ofono_path.clone(), sim: sim_path, status, identity, bearers: vec![], contexts: contexts.clone() })
                     .await?;
                 server.at(&path, Modem3gpp { ofono_path: ofono_path.clone(), status: status_3gpp, contexts: contexts.clone() }).await?;
+                server.at(&path, ProfileManager { ofono_path: ofono_path.clone(), contexts: contexts.clone() }).await?;
                 server.at(&path, Messaging { ofono_path: ofono_path.clone(), messages: vec![] }).await?;
                 server.at(&path, Simple { ofono_path, contexts }).await?;
                 server.at(&path, ModemSignal { task: Some(self.events.clone()), ..Default::default() }).await?;

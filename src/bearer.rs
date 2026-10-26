@@ -364,3 +364,104 @@ mod tests {
         assert_eq!(u32::try_from(down.ip4["method"].try_clone().unwrap()).unwrap(), method::MM_BEARER_IP_METHOD_UNKNOWN);
     }
 }
+
+/// Modem3gpp.ProfileManager: a profile is an oFono context, its
+/// "profile-id" the number oFono ends the context path with.
+pub fn profile_id(context_path: &str) -> Option<i32> {
+    context_path.rsplit_once("/context")?.1.parse().ok()
+}
+
+/// The profile of one context (no password, as for the initial bearer).
+/// `attach` marks the context ofono-binder attaches with.
+pub fn profile(context_path: &str, ctx: &Props, attach: bool) -> Option<Dict> {
+    let mut d = attach_settings(ctx).to_dict();
+    d.insert("profile-id".into(), v(profile_id(context_path)?));
+    d.insert("profile-name".into(), v(ofono::str(ctx, "Name").unwrap_or_default()));
+    let mut ty = match ofono::str(ctx, "Type") {
+        Some("internet") => apn_type::MM_BEARER_APN_TYPE_DEFAULT,
+        Some("mms") => apn_type::MM_BEARER_APN_TYPE_MMS,
+        Some("ims") => apn_type::MM_BEARER_APN_TYPE_IMS,
+        _ => apn_type::MM_BEARER_APN_TYPE_NONE, // "wap" has no MM type
+    };
+    if attach {
+        ty |= apn_type::MM_BEARER_APN_TYPE_INITIAL;
+    }
+    d.insert("apn-type".into(), v(ty));
+    Some(d)
+}
+
+/// The oFono context type for a profile's "apn-type".
+pub fn profile_context_type(ty: u32) -> &'static str {
+    if ty & apn_type::MM_BEARER_APN_TYPE_MMS != 0 {
+        "mms"
+    } else if ty & apn_type::MM_BEARER_APN_TYPE_IMS != 0 {
+        "ims"
+    } else {
+        "internet"
+    }
+}
+
+/// ProfileManager.Set: the context properties to write for `requested`.
+/// Keys a context can't hold are refused rather than silently dropped.
+pub fn profile_settings(requested: &Dict) -> Result<Vec<(&'static str, String)>, String> {
+    let s = |k: &str| match requested.get(k).map(|v| &**v) {
+        Some(Variant::Str(s)) => Ok(s.to_string()),
+        _ => Err(format!("{k} must be a string")),
+    };
+    let req = Request::from_dict(requested);
+    let mut out = vec![];
+    for key in requested.keys() {
+        match key.as_str() {
+            "profile-id" => {}
+            "profile-name" => out.push(("Name", s(key)?)),
+            "apn" => out.push(("AccessPointName", s(key)?)),
+            "user" => out.push(("Username", s(key)?)),
+            "password" => out.push(("Password", s(key)?)),
+            "ip-type" => out.push(("Protocol", req.protocol().to_owned())),
+            "allowed-auth" => out.push(("AuthenticationMethod", req.auth_method().to_owned())),
+            "apn-type" => out.push(("Type", profile_context_type(req.apn_type).to_owned())),
+            other => return Err(format!("{other} can't be stored in an oFono context")),
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    fn ctx(kv: &[(&str, &str)]) -> Props {
+        kv.iter().map(|(k, val)| (k.to_string(), v(*val))).collect()
+    }
+
+    #[test]
+    fn context_as_profile() {
+        let c = ctx(&[("Name", "CT"), ("Type", "internet"), ("AccessPointName", "ctnet"), ("Protocol", "dual"), ("AuthenticationMethod", "chap"), ("Username", "u"), ("Password", "secret")]);
+        let p = profile("/ril_0/context12", &c, true).unwrap();
+        let get = |k: &str| p[k].try_clone().unwrap();
+        assert_eq!(i32::try_from(get("profile-id")).unwrap(), 12);
+        assert_eq!(String::try_from(get("profile-name")).unwrap(), "CT");
+        assert_eq!(String::try_from(get("apn")).unwrap(), "ctnet");
+        assert_eq!(u32::try_from(get("apn-type")).unwrap(), apn_type::MM_BEARER_APN_TYPE_DEFAULT | apn_type::MM_BEARER_APN_TYPE_INITIAL);
+        assert_eq!(u32::try_from(get("ip-type")).unwrap(), family::MM_BEARER_IP_FAMILY_IPV4V6);
+        assert_eq!(u32::try_from(get("allowed-auth")).unwrap(), auth::MM_BEARER_ALLOWED_AUTH_CHAP);
+        assert!(!p.contains_key("password"), "never listed");
+        let mms = profile("/ril_0/context2", &ctx(&[("Type", "mms")]), false).unwrap();
+        assert_eq!(u32::try_from(mms["apn-type"].try_clone().unwrap()).unwrap(), apn_type::MM_BEARER_APN_TYPE_MMS);
+        assert!(profile("/ril_0/notacontext", &c, false).is_none());
+    }
+
+    #[test]
+    fn set_maps_to_context_properties() {
+        let d = Dict::from([
+            ("profile-id".into(), v(3i32)),
+            ("apn".into(), v("ctwap")),
+            ("apn-type".into(), v(apn_type::MM_BEARER_APN_TYPE_MMS)),
+            ("ip-type".into(), v(family::MM_BEARER_IP_FAMILY_IPV4)),
+        ]);
+        assert_eq!(profile_settings(&d).unwrap(), [("AccessPointName", "ctwap".to_owned()), ("Protocol", "ip".to_owned()), ("Type", "mms".to_owned())]);
+        let bad = Dict::from([("roaming-allowance".into(), v(1u32))]);
+        assert!(profile_settings(&bad).is_err());
+    }
+}

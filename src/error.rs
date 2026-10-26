@@ -9,6 +9,8 @@ pub enum CoreError {
     Unsupported(String),
     Unauthorized(String),
     WrongState(String),
+    InvalidArgs(String),
+    NotFound(String),
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;

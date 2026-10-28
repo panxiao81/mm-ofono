@@ -29,10 +29,13 @@ impl Manager {
         Err(CoreError::Unsupported("not implemented".into()))
     }
 
-    /// The ModemManager API level we implement, not this crate's version:
-    /// clients compare it against MM releases.
+    /// The ModemManager release we behave like, not this crate's version:
+    /// clients compare it against MM releases. The interfaces are 1.24's,
+    /// but cellbroadcastd treats any 1.24.x as lacking SetChannels (true of
+    /// MM 1.24, not of us), and upstream's CellBroadcast was complete by the
+    /// 1.25.95 release candidate.
     #[zbus(property)]
     async fn version(&self) -> &str {
-        "1.24.0"
+        "1.25.95"
     }
 }

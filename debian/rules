@@ -21,6 +21,8 @@ override_dh_auto_install:
 		debian/mm-ofono/usr/lib/systemd/system/ModemManager.service.d/10-mm-ofono.conf
 	install -Dm644 debian/mm-ofono-radio.pkla \
 		debian/mm-ofono/etc/polkit-1/localauthority/10-vendor.d/mm-ofono-radio.pkla
+	install -Dm644 debian/org.freedesktop.ModemManager1.mm-ofono.conf \
+		debian/mm-ofono/etc/dbus-1/system.d/org.freedesktop.ModemManager1.mm-ofono.conf
 
 override_dh_auto_clean:
 	rm -rf target debian/cargo-home

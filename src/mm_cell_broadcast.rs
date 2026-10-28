@@ -132,7 +132,7 @@ impl CellBroadcast {
         #[zbus(signal_emitter)] em: SignalEmitter<'_>,
         path: OwnedObjectPath,
     ) -> Result<()> {
-        crate::auth::check(conn, &header, crate::auth::MESSAGING).await?;
+        crate::auth::check(conn, &header, crate::auth::CELL_BROADCAST).await?;
         let Some(i) = self.messages.iter().position(|p| *p == path) else {
             return Err(CoreError::Failed(format!("no cell broadcast message {path}")));
         };
@@ -149,7 +149,16 @@ impl CellBroadcast {
         if channels.iter().any(|&(a, b)| a > b || b > 0xffff) {
             return Err(CoreError::Failed(format!("invalid channel ranges {channels:?}")));
         }
-        Ok(ofono::set_property(conn, &self.ofono_path, CBS, "Topics", Variant::from(topics_string(&channels))).await?)
+        match ofono::set_property(conn, &self.ofono_path, CBS, "Topics", Variant::from(topics_string(&channels))).await {
+            // oFono only has CellBroadcast while a SIM is in (zbus turns
+            // the standard D-Bus error names into fdo errors).
+            Err(zbus::Error::FDO(e))
+                if matches!(*e, zbus::fdo::Error::UnknownMethod(_) | zbus::fdo::Error::UnknownInterface(_) | zbus::fdo::Error::UnknownObject(_)) =>
+            {
+                Err(CoreError::WrongState("no cell broadcast service without a SIM".into()))
+            }
+            r => Ok(r?),
+        }
     }
 
     #[zbus(signal)]
